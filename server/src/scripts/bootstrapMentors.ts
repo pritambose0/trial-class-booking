@@ -11,7 +11,7 @@ interface MentorSeed {
 export const MENTOR_ROSTER: MentorSeed[] = [
   {
     name: "Aarav Sharma",
-    email: "aarav.sharma@mentor.codeyoung.demo",
+    email: "rexaw91050@aahzz.com",
     expertise: ["Mathematics", "Science"],
     profileImage:
       "https://api.dicebear.com/9.x/initials/svg?seed=Aarav%20Sharma",

@@ -2,6 +2,9 @@ import { Types } from "mongoose";
 import { Booking } from "../models/booking.model.js";
 import { Mentor } from "../models/mentor.model.js";
 import { ApiError } from "../utils/ApiError.js";
+import logger from "../lib/logger.js";
+import { generateMeetingLink } from "../utils/meeting.js";
+import { sendBookingEmails } from "./email.service.js";
 import {
   CreateBookingInput,
   GetAvailabilityInput,
@@ -155,6 +158,9 @@ export const createBooking = async (input: CreateBookingInput) => {
     throw new ApiError(404, "Mentor not found");
   }
 
+  // Generate a unique dummy meeting link for this trial class.
+  const meetingLink = generateMeetingLink();
+
   // MongoDB session + transaction
   const session = await Booking.startSession();
 
@@ -224,6 +230,7 @@ export const createBooking = async (input: CreateBookingInput) => {
           childAge,
           startsAt,
           endsAt,
+          meetingLink,
         },
       ],
       { session },
@@ -231,6 +238,28 @@ export const createBooking = async (input: CreateBookingInput) => {
 
     // Commit
     await session.commitTransaction();
+
+    // Notify both the parent and the mentor with the meeting link. Failures here
+    // must not roll back or fail an otherwise successful booking.
+    try {
+      await sendBookingEmails({
+        bookingId: booking._id.toString(),
+        parentName,
+        parentEmail,
+        childAge,
+        mentorName: mentor.name,
+        mentorEmail: mentor.email,
+        startsAt,
+        endsAt,
+        meetingLink,
+      });
+    } catch (emailErr) {
+      logger.error(
+        { error: emailErr, bookingId: booking._id.toString() },
+        "Unexpected failure while sending booking emails",
+      );
+    }
+
     return booking;
   } catch (err) {
     // Abort on any failure that hasn't already aborted above.

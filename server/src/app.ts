@@ -23,11 +23,11 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(cookieParser());
 
 // Routes
-app.use("/api/mentors", mentorRoutes);
-app.use("/api/bookings", bookingRoutes);
+app.use("/api/v1/mentors", mentorRoutes);
+app.use("/api/v1/bookings", bookingRoutes);
 
 // Health Check
-app.get("/api/health", (_req, res) => {
+app.get("/api/v1/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "trial-class-booking-server",

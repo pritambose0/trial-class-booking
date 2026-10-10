@@ -446,3 +446,21 @@ Changes
 - app.ts:38: unknown routes now throw ApiError(404, ...) instead of a plain Error (was returning 500).
 - validate.middleware.ts: replaced req.query = ... (getter-only in Express 5) with Object.defineProperty.
 - scripts/bootstrapMentors.ts: new idempotent 10-mentor roster upsert; wired into index.ts on startup.
+
+## 10. Phase 6: Send meeting links on booking creation
+
+**User:**
+
+Now update one thing is that the meeting link should be updated while creating new booking and sending back the meeting link to client as response.
+
+**Agent:**
+
+Done. Meeting link + nodemailer email service implemented.
+Changes:
+
+- server/src/utils/meeting.ts — generates a unique dummy link (e.g. https://meet.jit.si/trial-class-<hex>), base via MEETING_BASE_URL.
+- server/src/services/booking.service.ts:160-162,232 — generates the link at booking creation, persists it as meetingLink, and the POST response already returns the booking (now including meetingLink).
+- server/src/services/email.service.ts — sendBookingEmails() sends HTML confirmation emails to the parent and the mentor (IST-formatted slot, booking details, and the meeting link). Failures are logged and never fail the booking.
+- server/src/lib/mailer.ts — nodemailer transporter; uses SMTP env vars when configured, otherwise falls back to jsonTransport and logs the generated email (dev-safe).
+- server/src/lib/env.ts, .env.example, .env — added MEETING_BASE_URL, MAIL_FROM, SMTP_HOST/PORT/SECURE/USER/PASS.
+  Typecheck and build pass. To actually deliver mail, fill in SMTP_HOST/USER/PASS; for local testing you can also use an Ethereal test account.
