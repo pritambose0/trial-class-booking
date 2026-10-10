@@ -1,20 +1,41 @@
-import cors from 'cors'
-import express from 'express'
-import { env } from './config/env.js'
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import express from "express";
+import helmet from "helmet";
+import { env } from "./lib/env.js";
+import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 
-export function createApp() {
-  const app = express()
+const app = express();
 
-  app.use(cors({ origin: env.clientOrigin }))
-  app.use(express.json())
+app.use(
+  cors({
+    origin: env.clientOrigin,
+    credentials: true,
+  }),
+);
+app.use(helmet());
 
-  app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      service: 'trial-class-booking-server',
-      timestamp: new Date().toISOString(),
-    })
-  })
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+app.use(cookieParser());
 
-  return app
-}
+// Routes
+
+// Health Check
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "trial-class-booking-server",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Catch-all route for non-existent paths (404)
+app.use((req, _, next) => {
+  next(new Error(`Route ${req.originalUrl} not found`));
+});
+
+// Error Handling
+app.use(errorHandler);
+
+export default app;

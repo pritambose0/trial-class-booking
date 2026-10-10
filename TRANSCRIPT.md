@@ -1,7 +1,6 @@
 # AI Interaction Transcript
 
 This file records the real prompts, decisions, commands, and results for the project.
-Results are pasted from actual terminal output; nothing is fabricated.
 
 ---
 
@@ -101,7 +100,7 @@ React `^19.2.8`, Vite `^8.3.0`, TypeScript `~6.0.2`, linter `oxlint` `^1.81.0`.
         <h1>Trial Class Booking</h1>
         <p>Frontend scaffold is running. Booking UI coming in a later phase.</p>
       </main>
-    )
+    );
   }
   ```
 
@@ -149,13 +148,13 @@ npm install -D typescript tsx @types/node @types/express @types/cors
 **Health handler:**
 
 ```ts
-app.get('/api/health', (_req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({
-    status: 'ok',
-    service: 'trial-class-booking-server',
+    status: "ok",
+    service: "trial-class-booking-server",
     timestamp: new Date().toISOString(),
-  })
-})
+  });
+});
 ```
 
 **Verify:**
@@ -192,3 +191,16 @@ Content-Type: application/json; charset=utf-8
 **Verified:** client build + lint pass; server typecheck + build pass; health endpoint returns 200 with JSON.
 
 **Known deferrals:** MongoDB Atlas connection string needed in Phase 2; no root `package.json`/workspace scripts (two independent npm packages).
+
+---
+
+## 6. Phase 2 initialization (User-driven)
+
+**User actions:**
+
+- Installed additional server dependencies: `mongoose` for DB connection, `pino` & `pino-pretty` for logging, `helmet` for security headers, and `cookie-parser`.
+- Created database connection logic (`src/lib/db.ts`).
+- Set up a structured logger using `pino` (`src/lib/logger.ts`).
+- Reorganized directory structure (moved `config` files to `lib`).
+- Integrated `helmet` and `cookie-parser` into the Express app (`src/app.ts`).
+- Created a global error-handling middleware (`src/middlewares/errorHandler.middleware.ts`).

@@ -33,11 +33,13 @@ npm run dev
 
 Environment variables (see `server/.env.example`):
 
-| Variable        | Default                 | Description                     |
-| --------------- | ----------------------- | ------------------------------- |
-| `NODE_ENV`      | `development`           | Runtime environment             |
-| `PORT`          | `4000`                  | API port                        |
-| `CLIENT_ORIGIN` | `http://localhost:5173` | Allowed CORS origin for the web |
+| Variable         | Default                 | Description                             |
+| ---------------- | ----------------------- | --------------------------------------- |
+| `NODE_ENV`       | `development`           | Runtime environment                     |
+| `PORT`           | `4000`                  | API port                                |
+| `CLIENT_ORIGIN`  | `http://localhost:5173` | Allowed CORS origin for the web         |
+| `MONGODB_URI`    | — (required)            | MongoDB Atlas connection string         |
+| `MONGODB_DB_NAME`| `trial-class-booking`   | Optional DB name, overrides the URI      |
 
 ### Client
 

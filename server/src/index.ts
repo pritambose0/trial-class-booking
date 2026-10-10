@@ -1,8 +1,33 @@
-import { createApp } from './app.js'
-import { env } from './config/env.js'
+import dotenv from "dotenv";
+dotenv.config({ path: "./.env" });
 
-const app = createApp()
+import connectDB from "./lib/db.js";
+import logger from "./lib/logger.js";
+import { env } from "./lib/env.js";
+import app from "./app.js";
+// import { bootstrapMentors } from "./scripts/bootstrapMentors.js";
 
-app.listen(env.port, () => {
-  console.log(`Server listening on http://localhost:${env.port}`)
-})
+connectDB()
+  .then(async () => {
+    // await bootstrapMentors();
+    const server = app.listen(env.port, () => {
+      logger.info(`Server is running at port : ${env.port}`);
+    });
+
+    server.on("error", (error) => {
+      logger.error({ error }, "Server Error Occurred");
+    });
+  })
+  .catch((err) => {
+    logger.error({ err }, "Database Connection Failed while starting server");
+    process.exit(1);
+  });
+
+process.on("unhandledRejection", (reason: unknown, p: Promise<unknown>) => {
+  logger.error({ reason, p }, "Unhandled Rejection at Promise");
+});
+
+process.on("uncaughtException", (error: Error) => {
+  logger.error({ error }, "Uncaught Exception Thrown");
+  process.exit(1);
+});
