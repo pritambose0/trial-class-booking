@@ -10,89 +10,187 @@ import {
   GetAvailabilityInput,
   GetBookingByIdInput,
 } from "../validators/booking.validator.js";
+import {
+  formatInZone,
+  formatTimeInZone,
+  istBusinessWindowForDate,
+  istBusinessWindowForInstant,
+  istMinutesSinceDayOpen,
+  IST_ZONE,
+  parseStartTime,
+} from "../utils/time.js";
 
-// Slot duration and daily window constants.
-const TIMEZONE_OFFSET = "+05:30";
 const SLOT_DURATION_MS = 30 * 60 * 1000; // 30 minutes
-const DAY_START_HOUR = 9; // 09:00 IST
-const DAY_END_HOUR = 18; // 18:00 IST
 const MAX_DAILY_BOOKINGS_PER_MENTOR = 2;
-const MAX_DAILY_TOTAL_BOOKINGS = 20;
 const MAX_ADVANCE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-export const getAvailableSlots = async (query: GetAvailabilityInput) => {
-  const { mentor: mentorId, date } = query;
-  const mentor = await Mentor.findById(mentorId).lean();
+interface Slot {
+  startsAt: string;
+  endsAt: string;
+  startsAtIST: string;
+  endsAtIST: string;
+  startsAtLocal?: string;
+  endsAtLocal?: string;
+  available: boolean;
+}
 
-  if (!mentor) {
-    throw new ApiError(404, "Mentor not found");
+const buildSlot = (slotStartMs: number, timezone?: string): Slot => {
+  const slotStart = new Date(slotStartMs);
+  const slotEnd = new Date(slotStartMs + SLOT_DURATION_MS);
+
+  return {
+    startsAt: slotStart.toISOString(),
+    endsAt: slotEnd.toISOString(),
+    startsAtIST: formatTimeInZone(slotStart, IST_ZONE),
+    endsAtIST: formatTimeInZone(slotEnd, IST_ZONE),
+    startsAtLocal: timezone ? formatTimeInZone(slotStart, timezone) : undefined,
+    endsAtLocal: timezone ? formatTimeInZone(slotEnd, timezone) : undefined,
+    available: true,
+  };
+};
+
+// Decorates a stored booking with human-readable times in the parent's zone
+// and in IST, so clients don't have to do their own timezone math.
+interface BookingRecord {
+  startsAt: Date;
+  endsAt: Date;
+  timezone: string;
+}
+
+const serializeBooking = (booking: BookingRecord) => ({
+  ...booking,
+  startsAtLocal: formatInZone(booking.startsAt, booking.timezone),
+  endsAtLocal: formatInZone(booking.endsAt, booking.timezone),
+  startsAtIST: formatInZone(booking.startsAt, IST_ZONE),
+  endsAtIST: formatInZone(booking.endsAt, IST_ZONE),
+});
+
+type ActiveBooking = {
+  mentor: Types.ObjectId;
+  startsAt: Date;
+  endsAt: Date;
+};
+
+const isSlotTaken = (
+  slotStart: number,
+  slotEnd: number,
+  existingBookings: { startsAt: Date; endsAt: Date }[],
+): boolean =>
+  existingBookings.some(
+    (b) => b.startsAt.getTime() < slotEnd && b.endsAt.getTime() > slotStart,
+  );
+
+export const getAvailableSlots = async (query: GetAvailabilityInput) => {
+  const { date, timezone, mentor: mentorId } = query;
+
+  // Generate candidate slots over the IST business window for that day.
+  const { dayOpen, dayClose } = istBusinessWindowForDate(date);
+
+  // Single-mentor availability.
+  if (mentorId) {
+    const mentor = await Mentor.findById(mentorId).lean();
+    if (!mentor) {
+      throw new ApiError(404, "Mentor not found");
+    }
+
+    const existingBookings = await Booking.find({
+      mentor: new Types.ObjectId(mentorId),
+      status: { $in: ["pending", "confirmed"] },
+      startsAt: { $gte: dayOpen, $lt: dayClose },
+    })
+      .select("startsAt endsAt")
+      .lean();
+
+    const capReached =
+      existingBookings.length >= MAX_DAILY_BOOKINGS_PER_MENTOR;
+
+    const slots: Slot[] = [];
+
+    for (
+      let slotStart = dayOpen.getTime();
+      slotStart + SLOT_DURATION_MS <= dayClose.getTime();
+      slotStart += SLOT_DURATION_MS
+    ) {
+      const slotEnd = slotStart + SLOT_DURATION_MS;
+
+      const slot = buildSlot(slotStart, timezone);
+      slot.available = !(
+        slotStart <= Date.now() ||
+        capReached ||
+        isSlotTaken(slotStart, slotEnd, existingBookings)
+      );
+      slots.push(slot);
+    }
+
+    return {
+      mentor: { id: mentor._id, name: mentor.name },
+      date,
+      timezone,
+      bookingsToday: existingBookings.length,
+      remainingSlots: Math.max(
+        0,
+        MAX_DAILY_BOOKINGS_PER_MENTOR - existingBookings.length,
+      ),
+      slots,
+    };
   }
 
-  // Interpret the requested date in Asia/Kolkata.
-  const dayStart = new Date(
-    `${date}T${String(DAY_START_HOUR).padStart(2, "0")}:00:00.000${TIMEZONE_OFFSET}`,
-  );
+  // Any-mentor availability: a slot is bookable when at least one mentor can
+  // take it (under their daily cap and free at that time).
+  const mentors = await Mentor.find({}).select("_id").lean();
+  if (mentors.length === 0) {
+    throw new ApiError(
+      409,
+      "No mentors are currently available to book a trial class",
+    );
+  }
 
-  const dayEnd = new Date(
-    `${date}T${String(DAY_END_HOUR).padStart(2, "0")}:00:00.000${TIMEZONE_OFFSET}`,
-  );
-
-  // Fetch all active bookings for the mentor on that day.
-  const existingBookings = await Booking.find({
-    mentor: new Types.ObjectId(mentorId),
+  const activeBookings = await Booking.find({
     status: { $in: ["pending", "confirmed"] },
-    startsAt: { $gte: dayStart, $lt: dayEnd },
+    startsAt: { $gte: dayOpen, $lt: dayClose },
   })
-    .select("startsAt endsAt")
+    .select("mentor startsAt endsAt")
     .lean();
 
-  // Check system-wide daily cap across ALL mentors.
-  const totalDailyBookings = await Booking.countDocuments({
-    status: { $in: ["pending", "confirmed"] },
-    startsAt: { $gte: dayStart, $lt: dayEnd },
-  });
-  const systemCapReached = totalDailyBookings >= MAX_DAILY_TOTAL_BOOKINGS;
+  const bookingsByMentor = new Map<string, ActiveBooking[]>();
+  for (const booking of activeBookings) {
+    const key = booking.mentor.toString();
+    const list = bookingsByMentor.get(key) ?? [];
+    list.push(booking);
+    bookingsByMentor.set(key, list);
+  }
 
-  // If the mentor has already reached their daily cap, or the system has reached its total cap, all slots are full.
-  const dailyCapReached =
-    systemCapReached ||
-    existingBookings.length >= MAX_DAILY_BOOKINGS_PER_MENTOR;
+  const isMentorFreeAt = (mentorId: Types.ObjectId, slotStart: number, slotEnd: number) => {
+    const list = bookingsByMentor.get(mentorId.toString()) ?? [];
+    if (list.length >= MAX_DAILY_BOOKINGS_PER_MENTOR) return false;
+    return !isSlotTaken(slotStart, slotEnd, list);
+  };
 
-  // Generate all candidate slots.
-  const slots: { startsAt: string; endsAt: string; available: boolean }[] = [];
+  const slots: Slot[] = [];
 
   for (
-    let slotStart = dayStart.getTime();
-    slotStart + SLOT_DURATION_MS <= dayEnd.getTime();
+    let slotStart = dayOpen.getTime();
+    slotStart + SLOT_DURATION_MS <= dayClose.getTime();
     slotStart += SLOT_DURATION_MS
   ) {
     const slotEnd = slotStart + SLOT_DURATION_MS;
 
-    // A slot is unavailable if it is in the past, the cap is reached,
-    // or it overlaps an existing booking.
-    const isPast = slotStart <= Date.now();
-    const isTaken =
-      isPast ||
-      dailyCapReached ||
-      existingBookings.some(
-        (b) => b.startsAt.getTime() < slotEnd && b.endsAt.getTime() > slotStart,
-      );
-
-    slots.push({
-      startsAt: new Date(slotStart).toISOString(),
-      endsAt: new Date(slotEnd).toISOString(),
-      available: !isTaken,
-    });
+    const slot = buildSlot(slotStart, timezone);
+    slot.available =
+      slotStart > Date.now() &&
+      mentors.some((m) => isMentorFreeAt(m._id, slotStart, slotEnd));
+    slots.push(slot);
   }
 
   return {
-    mentor: { id: mentor._id, name: mentor.name },
+    mentor: null,
     date,
-    bookingsToday: existingBookings.length,
+    timezone,
+    bookingsToday: activeBookings.length,
     remainingSlots: Math.max(
       0,
-      MAX_DAILY_BOOKINGS_PER_MENTOR - existingBookings.length,
+      mentors.length * MAX_DAILY_BOOKINGS_PER_MENTOR - activeBookings.length,
     ),
     slots,
   };
@@ -100,62 +198,51 @@ export const getAvailableSlots = async (query: GetAvailabilityInput) => {
 
 export const createBooking = async (input: CreateBookingInput) => {
   const {
-    mentor: mentorId,
+    mentor: requestedMentorId,
     parentName,
     parentEmail,
     childAge,
+    timezone,
     startsAt,
-    endsAt,
   } = input;
 
-  // Validate the slot within the allowed Asia/Kolkata window
-  // Build the day's open/close boundaries in IST for the requested slot date.
-  const slotDateStr = startsAt.toLocaleDateString("en-CA", {
-    timeZone: "Asia/Kolkata",
-  }); // "YYYY-MM-DD"
+  // Resolve the parent's intended start into an exact UTC instant. When
+  // `startsAt` is the parent's local wall-clock time, luxon resolves it in the
+  // given zone, correctly handling DST gaps/overlaps.
+  const utcStart = parseStartTime(startsAt, timezone);
+  const utcEnd = new Date(utcStart.getTime() + SLOT_DURATION_MS);
 
-  const dayOpenIST = new Date(
-    `${slotDateStr}T${String(DAY_START_HOUR).padStart(2, "0")}:00:00.000${TIMEZONE_OFFSET}`,
-  );
-  const dayCloseIST = new Date(
-    `${slotDateStr}T${String(DAY_END_HOUR).padStart(2, "0")}:00:00.000${TIMEZONE_OFFSET}`,
-  );
+  // Validate the slot within the allowed IST business window for the IST day
+  // that contains the requested start.
+  const { dayOpen, dayClose } = istBusinessWindowForInstant(utcStart);
 
-  if (startsAt < dayOpenIST || endsAt > dayCloseIST) {
+  if (utcStart < dayOpen || utcEnd > dayClose) {
     throw new ApiError(
       422,
-      `Bookings are only available between ${DAY_START_HOUR}:00 and ${DAY_END_HOUR}:00 IST`,
+      `Trial classes are only available between 09:00 and 18:00 IST`,
     );
   }
 
-  // Slot must start on an exact 30-minute boundary (e.g. :00 or :30).
-  const minutesIST =
-    Math.floor((startsAt.getTime() - dayOpenIST.getTime()) / (60 * 1000)) % 30;
-
-  if (minutesIST !== 0) {
+  // Slot must start on an exact 30-minute boundary in IST (e.g. :00 or :30).
+  const minutesIST = Math.round(istMinutesSinceDayOpen(utcStart));
+  if (minutesIST % 30 !== 0) {
     throw new ApiError(
       422,
-      "Slot must start on a 30-minute boundary (e.g. 09:00, 09:30, 10:00 IST)",
+      "Trial classes must start on a 30-minute boundary (e.g. 09:00, 09:30 IST)",
     );
   }
 
   // Reject bookings in the past.
-  if (startsAt.getTime() <= Date.now()) {
+  if (utcStart.getTime() <= Date.now()) {
     throw new ApiError(422, "Trial classes cannot be booked in the past");
   }
 
   // Reject bookings too far in advance.
-  if (startsAt.getTime() > Date.now() + MAX_ADVANCE_DAYS * MS_PER_DAY) {
+  if (utcStart.getTime() > Date.now() + MAX_ADVANCE_DAYS * MS_PER_DAY) {
     throw new ApiError(
       422,
       `Trial classes can only be booked up to ${MAX_ADVANCE_DAYS} days in advance`,
     );
-  }
-
-  // Verify mentor exists
-  const mentor = await Mentor.findById(mentorId).lean();
-  if (!mentor) {
-    throw new ApiError(404, "Mentor not found");
   }
 
   // Generate a unique dummy meeting link for this trial class.
@@ -167,69 +254,99 @@ export const createBooking = async (input: CreateBookingInput) => {
   try {
     session.startTransaction();
 
-    // System-wide daily cap check: count ALL active bookings for the same day.
-    const totalDailyBookings = await Booking.countDocuments(
+    // Snapshot all active bookings for this IST day. Used to check both the
+    // per-mentor daily cap and slot conflicts inside the transaction.
+    const activeBookings = await Booking.find(
       {
         status: { $in: ["pending", "confirmed"] },
-        startsAt: { $gte: dayOpenIST, $lt: dayCloseIST },
-      },
-      { session },
-    );
-
-    if (totalDailyBookings >= MAX_DAILY_TOTAL_BOOKINGS) {
-      await session.abortTransaction();
-      throw new ApiError(
-        409,
-        `The system is fully booked for the day (max ${MAX_DAILY_TOTAL_BOOKINGS} trial classes per day).`,
-      );
-    }
-
-    // Daily mentor cap check: count this mentor's active bookings for the same day.
-    const dailyBookingCount = await Booking.countDocuments(
-      {
-        mentor: new Types.ObjectId(mentorId),
-        status: { $in: ["pending", "confirmed"] },
-        startsAt: { $gte: dayOpenIST, $lt: dayCloseIST },
-      },
-      { session },
-    );
-
-    if (dailyBookingCount >= MAX_DAILY_BOOKINGS_PER_MENTOR) {
-      await session.abortTransaction();
-      throw new ApiError(
-        409,
-        `This mentor is fully booked for the day (max ${MAX_DAILY_BOOKINGS_PER_MENTOR} trial classes per day)`,
-      );
-    }
-
-    // Conflict check: no overlapping active booking for this exact slot.
-    const conflict = await Booking.findOne(
-      {
-        mentor: new Types.ObjectId(mentorId),
-        status: { $in: ["pending", "confirmed"] },
-        startsAt: { $lt: endsAt },
-        endsAt: { $gt: startsAt },
+        startsAt: { $gte: dayOpen, $lt: dayClose },
       },
       null,
       { session },
-    ).lean();
+    )
+      .select("mentor startsAt endsAt")
+      .lean();
 
-    if (conflict) {
-      await session.abortTransaction();
-      throw new ApiError(409, "The requested time slot is no longer available");
+    const bookingCounts = new Map<string, number>();
+    const bookingsByMentor = new Map<string, ActiveBooking[]>();
+    for (const booking of activeBookings) {
+      const key = booking.mentor.toString();
+      bookingCounts.set(key, (bookingCounts.get(key) ?? 0) + 1);
+
+      const list = bookingsByMentor.get(key) ?? [];
+      list.push(booking);
+      bookingsByMentor.set(key, list);
     }
 
-    // Create the booking document (same session). The mentor's per-day cap
-    // and slot conflicts were already validated inside this transaction.
+    const isMentorFree = (mentorId: Types.ObjectId): boolean => {
+      const key = mentorId.toString();
+      if ((bookingCounts.get(key) ?? 0) >= MAX_DAILY_BOOKINGS_PER_MENTOR) {
+        return false;
+      }
+      const list = bookingsByMentor.get(key) ?? [];
+      return !isSlotTaken(utcStart.getTime(), utcEnd.getTime(), list);
+    };
+
+    // Choose the mentor:
+    //  - explicit `mentor` → verify that mentor is still available;
+    //  - otherwise assign any available mentor (preferring the one with the
+    //    fewest bookings today, so load is spread fairly).
+    const mentors = await Mentor.find({}).select("name email").lean();
+    if (mentors.length === 0) {
+      await session.abortTransaction();
+      throw new ApiError(
+        409,
+        "No mentors are currently available to take a trial class",
+      );
+    }
+
+    let assignedMentor;
+    if (requestedMentorId) {
+      const mentor = mentors.find(
+        (m) => m._id.toString() === requestedMentorId,
+      );
+      if (!mentor) {
+        await session.abortTransaction();
+        throw new ApiError(404, "Mentor not found");
+      }
+      if (!isMentorFree(mentor._id)) {
+        await session.abortTransaction();
+        throw new ApiError(
+          409,
+          "This mentor is no longer available for the requested time slot",
+        );
+      }
+      assignedMentor = mentor;
+    } else {
+      const candidates = mentors.filter((m) => isMentorFree(m._id));
+      if (candidates.length === 0) {
+        await session.abortTransaction();
+        throw new ApiError(
+          409,
+          "No mentors are available for the requested time slot",
+        );
+      }
+
+      candidates.sort(
+        (a, b) =>
+          (bookingCounts.get(a._id.toString()) ?? 0) -
+          (bookingCounts.get(b._id.toString()) ?? 0),
+      );
+      assignedMentor = candidates[0];
+    }
+
+    // Create the booking document (same session). The mentor, daily cap and
+    // slot conflicts were all validated inside this transaction.
     const [booking] = await Booking.create(
       [
         {
-          mentor: mentorId,
+          mentor: assignedMentor._id,
           parentName,
           parentEmail,
           childAge,
-          startsAt,
-          endsAt,
+          startsAt: utcStart,
+          endsAt: utcEnd,
+          timezone,
           meetingLink,
         },
       ],
@@ -247,10 +364,11 @@ export const createBooking = async (input: CreateBookingInput) => {
         parentName,
         parentEmail,
         childAge,
-        mentorName: mentor.name,
-        mentorEmail: mentor.email,
-        startsAt,
-        endsAt,
+        mentorName: assignedMentor.name,
+        mentorEmail: assignedMentor.email,
+        startsAt: booking.startsAt,
+        endsAt: booking.endsAt,
+        timezone,
         meetingLink,
       });
     } catch (emailErr) {
@@ -260,7 +378,7 @@ export const createBooking = async (input: CreateBookingInput) => {
       );
     }
 
-    return booking;
+    return serializeBooking(booking.toObject());
   } catch (err) {
     // Abort on any failure that hasn't already aborted above.
     if (session.inTransaction()) {
@@ -282,5 +400,5 @@ export const getBookingById = async ({ id }: GetBookingByIdInput) => {
     throw new ApiError(404, "Booking not found");
   }
 
-  return booking;
+  return serializeBooking(booking);
 };

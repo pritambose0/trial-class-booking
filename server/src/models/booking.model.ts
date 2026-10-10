@@ -8,6 +8,7 @@ export interface IBooking extends Document {
   startsAt: Date;
   endsAt: Date;
   status: "pending" | "confirmed";
+  timezone: string;
   meetingLink?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -70,6 +71,13 @@ const bookingSchema = new Schema<IBooking>(
       },
       default: "pending",
       required: true,
+    },
+
+    timezone: {
+      type: String,
+      required: [true, "Parent timezone is required"],
+      trim: true,
+      maxlength: [64, "Timezone name cannot exceed 64 characters"],
     },
 
     meetingLink: {

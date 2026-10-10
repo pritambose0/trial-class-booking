@@ -1,6 +1,7 @@
 import { env } from "../lib/env.js";
 import { isMailerConfigured, transporter } from "../lib/mailer.js";
 import logger from "../lib/logger.js";
+import { formatSlotLabel, IST_ZONE } from "../utils/time.js";
 
 export interface BookingEmailContext {
   bookingId: string;
@@ -11,6 +12,7 @@ export interface BookingEmailContext {
   mentorEmail: string;
   startsAt: Date;
   endsAt: Date;
+  timezone: string;
   meetingLink: string;
 }
 
@@ -21,29 +23,6 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-
-const formatSlot = (startsAt: Date, endsAt: Date): string => {
-  const date = startsAt.toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-  const start = startsAt.toLocaleTimeString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-  const end = endsAt.toLocaleTimeString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-  return `${date} • ${start} - ${end} IST`;
-};
 
 const baseTemplate = (
   title: string,
@@ -122,7 +101,8 @@ const sendMail = async (to: string, subject: string, html: string) => {
 export const sendParentBookingEmail = async (
   ctx: BookingEmailContext,
 ): Promise<void> => {
-  const slot = formatSlot(ctx.startsAt, ctx.endsAt);
+  // Parents see the class in their own local time (DST-aware).
+  const slot = formatSlotLabel(ctx.startsAt, ctx.endsAt, ctx.timezone);
   const reason = ctx.childAge
     ? `${ctx.parentName}'s child (age ${ctx.childAge})`
     : `${ctx.parentName}'s child`;
@@ -134,7 +114,7 @@ export const sendParentBookingEmail = async (
       "Trial Class Booking Confirmed",
       `Hi ${ctx.parentName}, your trial class with ${ctx.mentorName} has been booked successfully.`,
       detailRow("Class", `Free trial class with ${ctx.mentorName}`) +
-        detailRow("When", slot) +
+        detailRow("When (your local time)", slot) +
         detailRow("Student", reason) +
         detailRow("Booking ID", ctx.bookingId),
       ctx.meetingLink,
@@ -146,7 +126,8 @@ export const sendParentBookingEmail = async (
 export const sendMentorBookingEmail = async (
   ctx: BookingEmailContext,
 ): Promise<void> => {
-  const slot = formatSlot(ctx.startsAt, ctx.endsAt);
+  // Mentors are in India, so the slot is shown in IST.
+  const slot = formatSlotLabel(ctx.startsAt, ctx.endsAt, IST_ZONE);
   const reason = ctx.childAge
     ? `${ctx.parentName}'s child (age ${ctx.childAge})`
     : `${ctx.parentName}'s child`;
@@ -159,7 +140,7 @@ export const sendMentorBookingEmail = async (
       `Hi ${ctx.mentorName}, a parent has booked a trial class with you.`,
       detailRow("Student", reason) +
         detailRow("Parent email", ctx.parentEmail) +
-        detailRow("When", slot) +
+        detailRow("When (IST)", slot) +
         detailRow("Booking ID", ctx.bookingId),
       ctx.meetingLink,
       "Join Meeting",

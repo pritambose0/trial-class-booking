@@ -464,3 +464,72 @@ Changes:
 - server/src/lib/mailer.ts — nodemailer transporter; uses SMTP env vars when configured, otherwise falls back to jsonTransport and logs the generated email (dev-safe).
 - server/src/lib/env.ts, .env.example, .env — added MEETING_BASE_URL, MAIL_FROM, SMTP_HOST/PORT/SECURE/USER/PASS.
   Typecheck and build pass. To actually deliver mail, fill in SMTP_HOST/USER/PASS; for local testing you can also use an Ethereal test account.
+
+**User:**
+
+Review again and let me know if the server is working as expected according to the requirements
+
+**Agent:**
+
+Here's your server's status against the assignment requirements:
+Done & verified (server):
+
+- 10 mentors — bootstrapMentors.ts seeds 10 mentors on startup (idempotent upsert), wired in index.ts. ✅
+- Max 2 demo classes/mentor/day (Req 4) — enforced in-transaction via per-day countDocuments, plus overlap-conflict check and a system-wide 20/day cap. ✅
+- Dummy meeting link (Req 3) — now generated (utils/meeting.ts), persisted on the booking, returned in the POST response, and emailed to both parent and mentor with nodemailer. ✅
+- Robust booking logic — UTC storage, IST 09:00–18:00 windows, 30-min slots/boundaries, past-date rejection, 30-day advance window, MongoDB transactions, Zod validation, clean layered architecture (controllers → services → models → utils). ✅
+- Error states (Req 5, partial) — unknown mentor → 404; fully-booked → 409; availability returns slots with available:false + remainingSlots. Adequate for the client to render a "no slots" state. ✅ (one gap below)
+  Not done / gaps:
+- Timezone (Req 1) — half done. Minors: the server only speaks IST. It displays/emails IST for the mentor in India, but there is no parent timezone handling — no timezone input, no parent-local time returned or scheduled in US/UK local time. getBookingById returns raw UTC ISO only.
+- DST (Req 2) — effectively unhandled. Hardcoded +05:30 is correct for IST (India has no DST), but since no parent TZ conversion exists, US/UK DST is never considered. No tz-aware library (luxon/date-fns-tz) is used.
+- startsAt/endsAt are returned as UTC ISO; a US/UK parent's booking time would need client-side conversion to their zone to be "displayed locally" — that's partly why Req 1/2 are incomplete.
+- "We assign an available mentor" flow not modeled. Availability is queried per mentor (/availability?mentor=<id>&date=). The assignment flow (parent picks a time → system assigns any available mentor) has no endpoint; the parent must pick a mentor first.
+- Global 20/day cap (already flagged in the earlier review) contradicts "20/day = expected load"; it can error "system fully booked" on a day where total is exactly 20 even if other mentors are free — minor, but worth removing since 10×2 already enforces it.
+  Bottom line: the server's core booking engine is solid (~90% of the logic), but the timezone/DST requirement is only partially done and would be my next priority — that, plus the mentor-assignment endpoint, are the main things separating you from a complete submission.
+
+**User:**
+
+Lets do it now Timezone (Req 1) — half done. Minors: the server only speaks IST. It displays/emails IST for the mentor in India, but there is no parent timezone handling — no timezone input, no parent-local time returned or scheduled in US/UK local time. getBookingById returns raw UTC ISO only.
+
+- DST (Req 2) — effectively unhandled. Hardcoded +05:30 is correct for IST (India has no DST), but since no parent TZ conversion exists, US/UK DST is never considered. No tz-aware library (luxon/date-fns-tz) is used.
+- startsAt/endsAt are returned as UTC ISO; a US/UK parent's booking time would need client-side conversion to their zone to be "displayed locally" — that's partly why Req 1/2 are incomplete.
+- "We assign an available mentor" flow not modeled. Availability is queried per mentor (/availability?mentor=<id>&date=). The assignment flow (parent picks a time → system assigns any available mentor) has no endpoint; the parent must pick a mentor first.
+- Global 20/day cap (already flagged in the earlier review) contradicts "20/day = expected load"; it can error "system fully booked" on a day where total is exactly 20 even if other mentors are free — minor, but worth removing since 10×2 already enforces it. and after that explain me in detail about the changes and all
+
+**Agent:**
+
+What I changed (per your 5 items)
+1 + 2 + 3. Timezone / DST / local-time responses — new src/utils/time.ts
+Added luxon (a DST-aware library) and a single timezone module:
+
+- IST_ZONE = "Asia/Kolkata", business hours 09:00–18:00 IST
+- isValidTimeZone(tz) — IANA validation (via IANAZone)
+- parseStartTime(startsAt, timezone) — resolves a timestamp to a UTC instant. Accepts either a UTC ISO string or a naive wall-clock ("2026-10-20T09:00:00") interpreted in the parent's zone. Because luxon resolves named zones, DST gaps/overlaps are handled automatically.
+- istBusinessWindowForDate/ForInstant, istMinutesSinceDayOpen — replace the old hardcoded +05:30 string math.
+- formatInZone, formatDateInZone, formatTimeInZone, formatSlotLabel.
+  Verified DST correctness:
+  NY 09:00 local -> UTC 2026-03-03T14:00Z (EST, -5)
+  NY 09:00 local -> UTC 2026-03-10T13:00Z (EDT, -4)
+  IST 09:00 -> NY 10:30 PM (Mar 2, EST) vs 11:30 PM (Mar 9, EDT)
+
+3. getBookingById no longer returns raw UTC only — serializeBooking()
+   Bookings now store the parent's timezone (new required field in booking.model.ts). Every booking payload from create and get-by-id is decorated with:
+   startsAt / endsAt → UTC ISO (machine)
+   startsAtLocal / endsAtLocal → parent's local time
+   startsAtIST / endsAtIST → mentor's IST
+   Live result: NY local: Oct 19, 2026, 11:30 PM | IST: Oct 20, 2026, 9:00 AM.
+4. "Assign an available mentor" flow — booking.service.ts
+
+- mentor is now optional in the create payload. Omit it → server auto-assigns an available mentor. Prefers the mentor with the fewest bookings that day (fair load spreading).
+- Availability is now any-mentor aware. GET /availability without mentor marks a slot available when at least one mentor can take it (remainingSlots = total remaining capacity). With mentor it behaves as before (single-mentor view).
+- Both paths still enforce the ≤2 classes/mentor/day cap and overlap conflicts, checked inside the same MongoDB transaction.
+- New error states: 409 "No mentors are available for the requested time slot" (create) and 409 "No mentors are currently available…" (empty roster).
+
+5. Removed the global 20/day cap
+   Deleted MAX_DAILY_TOTAL_BOOKINGS and its system-wide countDocuments block from both availability and create. Capacity is now purely 10 mentors × 2/day, so the phantom "system fully booked" error is gone.
+   Email service — email.service.ts
+   Parent email shows the slot in their local time; mentor email shows IST. Both include the dummy meeting link. Confirmed delivery: SMTP verify: true, message accepted, 250 2.0.0 OK.
+   Docs
+
+- README.md — new /api/v1 base path, env table (MEETING*BASE_URL, MAIL_FROM, SMTP*\*), a Timezones & DST section, endpoint reference, and updated status checklist.
+- .env.example already documents the new vars.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidTimeZone, parseStartTime } from "../utils/time.js";
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid ID format");
 
@@ -12,16 +13,23 @@ const dateOnly = z
     );
   }, "Invalid date");
 
-// Validates req.query for GET /availability
-export const getAvailabilitySchema = z.object({
-  mentor: objectId,
-  date: dateOnly,
-});
+const timezone = z
+  .string()
+  .trim()
+  .min(1, "Timezone is required")
+  .refine(isValidTimeZone, "Invalid IANA timezone (e.g. America/New_York)");
 
-// Validates req.body for POST /
+export const getAvailabilitySchema = z
+  .object({
+    date: dateOnly,
+    timezone: timezone.optional(),
+    mentor: objectId.optional(),
+  })
+  .strict();
+
 export const createBookingSchema = z
   .object({
-    mentor: objectId,
+    mentor: objectId.optional(),
 
     parentName: z
       .string()
@@ -30,7 +38,6 @@ export const createBookingSchema = z
       .max(100, "Parent name cannot exceed 100 characters"),
 
     parentEmail: z
-      .string()
       .email("Invalid email address")
       .transform((email) => email.trim().toLowerCase()),
 
@@ -41,24 +48,26 @@ export const createBookingSchema = z
       .max(18, "Child age cannot exceed 18 years")
       .optional(),
 
-    startsAt: z.coerce.date(),
-    endsAt: z.coerce.date(),
+    timezone,
+
+    startsAt: z.string().min(1, "Start time is required"),
   })
   .strict()
-  .refine((data) => data.endsAt > data.startsAt, {
-    message: "End time must be after start time",
-    path: ["endsAt"],
-  })
   .refine(
-    (data) =>
-      data.endsAt.getTime() - data.startsAt.getTime() === 30 * 60 * 1000,
+    (data) => {
+      try {
+        parseStartTime(data.startsAt, data.timezone);
+        return true;
+      } catch {
+        return false;
+      }
+    },
     {
-      message: "Trial class must be exactly 30 minutes",
-      path: ["endsAt"],
+      message: "Start time must be a valid date-time in the given timezone",
+      path: ["startsAt"],
     },
   );
 
-// Validates req.params for GET /:id
 export const getBookingByIdSchema = z.object({
   id: objectId,
 });
