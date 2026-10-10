@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { ApiError } from "../utils/ApiError.js";
 import logger from "../lib/logger.js";
 
-export const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunction) => {
+export const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction) => {
   let error: ApiError;
 
   // Normalize error

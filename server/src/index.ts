@@ -5,11 +5,11 @@ import connectDB from "./lib/db.js";
 import logger from "./lib/logger.js";
 import { env } from "./lib/env.js";
 import app from "./app.js";
-// import { bootstrapMentors } from "./scripts/bootstrapMentors.js";
+import { bootstrapMentors } from "./scripts/bootstrapMentors.js";
 
 connectDB()
   .then(async () => {
-    // await bootstrapMentors();
+    await bootstrapMentors();
     const server = app.listen(env.port, () => {
       logger.info(`Server is running at port : ${env.port}`);
     });
