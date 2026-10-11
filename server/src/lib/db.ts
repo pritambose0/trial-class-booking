@@ -2,10 +2,28 @@ import mongoose from "mongoose";
 import logger from "./logger.js";
 import { env } from "./env.js";
 
-async function connectDB(): Promise<void> {
-  if (mongoose.connection.readyState === 1) {
-    logger.debug("Already connected to database");
+const globalForMongoose = globalThis as unknown as {
+  __trialClassBookingMongoose?: { promise: Promise<void> | null };
+};
+
+const state = (globalForMongoose.__trialClassBookingMongoose ??= {
+  promise: null as Promise<void> | null,
+});
+
+const CONNECT_TIMEOUT_MS = 8000;
+const SERVER_SELECTION_TIMEOUT_MS = 8000;
+const SOCKET_TIMEOUT_MS = 30000;
+
+export const isDBConnected = (): boolean =>
+  mongoose.connection.readyState === 1;
+
+export async function connectDB(): Promise<void> {
+  if (isDBConnected()) {
     return;
+  }
+
+  if (state.promise) {
+    return state.promise;
   }
 
   if (!env.mongoURI) {
@@ -13,22 +31,26 @@ async function connectDB(): Promise<void> {
     throw new Error("MONGODB_URI is not defined in environment variables");
   }
 
-  try {
-    const db = await mongoose.connect(env.mongoURI, {
+  state.promise = mongoose
+    .connect(env.mongoURI, {
       dbName: env.mongoDBName,
+      bufferCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 5000,
+      connectTimeoutMS: CONNECT_TIMEOUT_MS,
+      serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS,
+      socketTimeoutMS: SOCKET_TIMEOUT_MS,
+    })
+    .then((db) => {
+      logger.info(
+        { host: db.connection.host, dbName: env.mongoDBName },
+        "Database connected",
+      );
+    })
+    .catch((error: unknown) => {
+      state.promise = null;
+      logger.error({ error }, "Database connection failed");
+      throw error;
     });
 
-    logger.info(
-      { host: db.connection.host, dbName: env.mongoDBName },
-      "Database connected",
-    );
-  } catch (error) {
-    logger.error({ error }, "Database connection failed");
-    throw new Error("Database connection failed");
-  }
+  return state.promise;
 }
-
-export default connectDB;

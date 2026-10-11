@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
-import connectDB from "./lib/db.js";
+import { connectDB } from "./lib/db.js";
 import logger from "./lib/logger.js";
 import { env } from "./lib/env.js";
 import app from "./app.js";

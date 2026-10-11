@@ -155,6 +155,7 @@ export const getAvailableSlots = async (query: GetAvailabilityInput) => {
 
   const bookingsByMentor = new Map<string, ActiveBooking[]>();
   for (const booking of activeBookings) {
+    if (!booking.mentor) continue;
     const key = booking.mentor.toString();
     const list = bookingsByMentor.get(key) ?? [];
     list.push(booking);

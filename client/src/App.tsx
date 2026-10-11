@@ -6,7 +6,11 @@ import Header from "./components/Header";
 import SlotGrid from "./components/SlotGrid";
 import { MessageCard, Spinner } from "./components/Status";
 import TimezoneSelect from "./components/TimezoneSelect";
-import { ApiRequestError, getAvailability } from "./lib/api";
+import {
+  ApiRequestError,
+  getAvailability,
+  invalidateAvailabilityCache,
+} from "./lib/api";
 import { IST_ZONE, addDays, detectTimeZone, zonedDateKey } from "./lib/time";
 import type { AvailabilitySlot, Booking } from "./lib/types";
 
@@ -294,6 +298,7 @@ const App = () => {
           onClose={() => setActiveSlot(null)}
           onBooked={(created) => {
             setActiveSlot(null);
+            invalidateAvailabilityCache();
             setBooking(created);
           }}
         />
