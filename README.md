@@ -130,7 +130,7 @@ cp .env.example .env
 
 | Variable       | Default                        | Description                       |
 | -------------- | ------------------------------ | --------------------------------- |
-| `VITE_API_URL` | `http://localhost:4000/api/v1` | Base URL of the booking API.      |
+| `API_URL`      | `http://localhost:4000/api/v1` | Base URL of the booking API.      |
 
 ---
 
