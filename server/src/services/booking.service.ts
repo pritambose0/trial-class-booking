@@ -378,7 +378,16 @@ export const createBooking = async (input: CreateBookingInput) => {
       );
     }
 
-    return serializeBooking(booking.toObject());
+    return {
+      ...serializeBooking(booking.toObject()),
+      // Replace the raw mentor ObjectId with the assigned mentor's details so
+      // auto-assigned bookings can render "Your mentor" without a second call.
+      mentor: {
+        _id: assignedMentor._id,
+        name: assignedMentor.name,
+        email: assignedMentor.email,
+      },
+    };
   } catch (err) {
     // Abort on any failure that hasn't already aborted above.
     if (session.inTransaction()) {

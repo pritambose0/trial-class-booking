@@ -107,6 +107,6 @@ bookingSchema.pre("validate", function () {
 bookingSchema.index({ mentor: 1, status: 1, startsAt: 1, endsAt: 1 });
 
 // Index for listing a mentor's bookings chronologically.
-bookingSchema.index({ mentor: 1, startsAt: 1 });
+bookingSchema.index({ mentor: 1, startsAt: 1 }, { unique: true });
 
 export const Booking = model<IBooking>("Booking", bookingSchema);
