@@ -592,3 +592,45 @@ Files: `client/src/App.tsx`; components (`Header`, `DayTabs`, `SlotGrid`, `Booki
 - Req 5 (no-availability error) — UI empty state, `available: false` slots + `remainingSlots` from the API, clear 404/409/422 messages. ✅
 
 **Known deferred item (not in the rubric):** if two requests race for the exact same mentor + slot, the unique index throws `E11000`, which currently surfaces as a 500. A follow-up could map duplicate-key/validation errors to friendly 409/422 responses.
+
+## 12. Phase 8: Submission-readiness polish
+
+**User:** Inspect the whole project against the assessment requirements, fix UI/error-handling/loading bugs without rewriting working code, review security/env/validation/API/timezone/booking-limits/concurrency, expand the README, audit scripts/deps/secrets/logs, run all checks/tests, verify TRANSCRIPT.md is genuine, and report results honestly. Do not deploy or submit.
+
+**Agent (real actions and results):**
+
+### Inspected
+- Read every server file (`app.ts`, routes, controllers, services, validators, models, `utils/time.ts`, `meeting.ts`, mailer, email service, `env.ts`, error handler, bootstrap) and every client file (`App.tsx`, all components, `lib/*`, `index.css`).
+- Compared against the requirements: timezone + DST (Req 1/2), dummy meeting link (Req 3), max 2 classes/mentor/day (Req 4), no-availability state (Req 5), 10 mentors, 30-min slots 09:00–18:00 IST, ~20/day as load.
+
+### Fixed (server)
+- `errorHandler.middleware.ts`: extracted and exported `normalizeError()` that maps database failures to clean HTTP responses — duplicate key `E11000` → **409** ("That time slot has just been booked…"), Mongoose `ValidationError` → **422** with field errors, `CastError` → **400**. This closes the previously-deferred concurrency gap where a loser of a booking race returned a 500.
+- `scripts/bootstrapMentors.ts`: one seed used an unrelated address (`rexaw91050@aahzz.com`); normalized it to the demo domain (`aarav.sharma@mentor.codeyoung.demo`) so the roster is consistent and contains no real-looking accounts.
+- `models/booking.model.ts`: `IBooking.status` type now includes `"cancelled"`, matching the schema enum.
+
+### Fixed (client)
+- `BookingModal.tsx`: closing via overlay/Escape/close button is disabled while a booking request is in flight (prevents the modal unmounting mid-POST and hiding a real booking), and the first field now auto-focuses.
+- `lib/time.ts`: removed the unused duplicate `formatDayLabel` (identical to `formatDayShort`).
+
+### README
+- Rewrote it with overview, features, tech stack, architecture, prerequisites, environment setup (server + client tables), installation, run commands, full API reference + error-code table, timezones/DST, booking rules, testing/checks, security notes, and status.
+- Corrected stale "(wired in a later phase)" wording and marked Phase 5 complete.
+
+### Audits
+- Secrets: `.env` is git-ignored; only `.env.example` placeholders are tracked. No credentials in any tracked file. The only `MONGODB_URI` in the repo is the credential-less local test URI in the test script.
+- `console.*`: none in `server/src` or `client/src` (logging goes through pino).
+- Dependencies: all server deps (`cookie-parser`, `cors`, `dotenv`, `express`, `helmet`, `luxon`, `mongoose`, `nodemailer`, `pino`, `pino-pretty`, `zod`) and client deps are referenced by the code.
+
+### Verified (actual commands)
+- `server`: `npm run typecheck` ✅, `npm run typecheck:test` ✅, `npm test` → **25 passed / 0 failed** (added `errorHandler.test.ts` covering the 409/422/400 mappings; suite needs no live DB), `npm run build` ✅.
+- `client`: `npm run lint` (oxlint) ✅, `npm run build` (tsc -b + vite) ✅.
+
+### Follow-up: consolidated validation onto a single middleware
+- The two validation entry points were merged into one. `utils/validate.ts` was removed; every route now uses `middlewares/validate.middleware.ts`.
+- The middleware was generalized to take a section→schema map (`validate({ body, query, params })`) instead of a single `{ body, query, params }` object, so the existing flat Zod schemas could be reused unchanged (and stay valid for the unit tests).
+- `mentor.validator.ts` flattened `getMentorByIdSchema` to `z.object({ id })`; `mentor.routes.ts` and `booking.routes.ts` now apply `validate(...)` for `params`/`query`/`body`; `booking.controller.ts` reads the already-validated `req.*` values.
+- Added `test/validate.middleware.test.ts` (body transform + write-back, 422 on invalid input, `req.query` getter shadowing). Server suite is now **28 tests passing**.
+
+### Not changed (working code, deliberate)
+- No API rate limiting (out of scope); modal lacks a full focus trap (basic `aria`/autofocus only).
+

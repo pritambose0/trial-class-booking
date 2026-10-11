@@ -1,154 +1,209 @@
 # Trial Class Booking
 
-A full-stack trial class booking application.
+A full-stack web app that lets a parent book a **free 30-minute trial class** with
+a Codeyoung mentor. The parent picks a slot in **their own timezone**, the server
+**auto-assigns an available mentor**, and both parties receive a confirmation
+email with a dummy meeting link.
 
-- **Frontend:** React + Vite + TypeScript (`client/`)
-- **Backend:** Node.js + Express + TypeScript (`server/`)
-- **Database:** MongoDB Atlas + Mongoose (wired in a later phase)
-- **Validation:** Zod (added in a later phase)
+- **Client:** React 19 + Vite + TypeScript, styled with Tailwind CSS v4 (`client/`)
+- **Server:** Node.js + Express 5 + TypeScript + Zod + Mongoose (`server/`)
+- **Database:** MongoDB (MongoDB Atlas or any replica set)
+
+---
+
+## Features
+
+- **Timezone-aware scheduling** — the parent's IANA timezone is auto-detected (and
+  can be changed); every slot is shown in the parent's local time with the
+  mentor's IST time underneath.
+- **DST-safe** — all conversions use `luxon` (server) and `Intl` (client), so
+  daylight-saving transitions in US/UK/EU zones resolve correctly.
+- **Auto mentor assignment** — the parent only picks a time; the server assigns
+  the least-loaded available mentor.
+- **Booking rules enforced** — 30-minute slots, 09:00–18:00 IST, max **2 confirmed
+  classes per mentor per IST day**, no past bookings, and a 30-day booking window.
+- **Concurrency-safe** — booking creation runs in a MongoDB transaction and is
+  backed by a unique `{ mentor, startsAt }` index; a losing race returns a clean
+  `409` instead of a server error.
+- **Dummy meeting link** — generated per booking, persisted, returned by the API,
+  emailed to both parties, and shown/copyable on the confirmation screen.
+- **Confirmation emails** — HTML email to the parent (their local time) and the
+  mentor (IST). With no SMTP configured, emails are rendered and logged instead of
+  sent.
+- **Polished, responsive UI** — sticky glass header, gradient hero, day tabs,
+  slot grid, inline-validated booking modal, and confirmation screen; includes
+  loading, empty, and error states plus reduced-motion support.
+
+---
+
+## Tech Stack
+
+| Layer      | Technology                                                                 |
+| ---------- | -------------------------------------------------------------------------- |
+| Frontend   | React 19, Vite, TypeScript, Tailwind CSS v4                                |
+| Backend    | Node.js, Express 5, TypeScript (ESM), Zod                                  |
+| Database   | MongoDB, Mongoose                                                          |
+| Scheduling | Luxon (server), `Intl.DateTimeFormat` (client)                             |
+| Email      | Nodemailer (SMTP, with JSON-transport fallback)                            |
+| Logging    | Pino                                                                       |
+| Tooling    | npm, oxlint (client lint), `node:test` + tsx (server tests), Helmet, CORS |
+
+---
+
+## Prerequisites
+
+- **Node.js >= 20** and **npm**
+- A **MongoDB connection** (MongoDB Atlas cluster or any replica set). Transactions
+  are used for booking creation, so a standalone `mongod` without a replica set
+  will not work.
+- (Optional) SMTP credentials to actually deliver emails.
+
+---
 
 ## Project Structure
 
 ```
 trial-class-booking/
-├── client/            # React + Vite frontend
-└── server/            # Express + TypeScript API
+├── client/                     # React + Vite frontend
+│   ├── src/
+│   │   ├── components/         # Header, TimezoneSelect, DayTabs, SlotGrid,
+│   │   │                       # BookingModal, Confirmation, Status
+│   │   ├── lib/                # api.ts, time.ts, types.ts
+│   │   ├── App.tsx             # composes the booking flow
+│   │   ├── index.css           # Tailwind v4 theme tokens
+│   │   └── main.tsx
+│   └── .env.example
+└── server/                     # Express + TypeScript API
+    ├── src/
+    │   ├── controllers/        # HTTP request/response handling
+    │   ├── services/           # business logic + database access
+    │   ├── models/             # Mongoose schemas (Mentor, Booking)
+    │   ├── validators/         # Zod schemas
+    │   ├── routes/             # endpoint + middleware wiring
+    │   ├── middlewares/        # error handler, Zod middleware
+    │   ├── utils/              # ApiError, ApiResponse, time, meeting
+    │   ├── lib/                # env, db, logger, mailer
+    │   ├── scripts/            # bootstrapMentors (10-mentor seed)
+    │   ├── app.ts              # Express app
+    │   └── index.ts            # server entrypoint
+    └── test/                   # node:test unit suite
 ```
 
-## Prerequisites
+The backend follows a strict layered flow:
+`route → validation → controller → service → model`.
 
-- Node.js >= 20
-- npm
+---
 
-## Setup
+## Environment Setup
 
-### Server
+### Server (`server/.env`)
 
 ```bash
 cd server
-npm install
 cp .env.example .env
-npm run dev
 ```
 
-Environment variables (see `server/.env.example`):
+| Variable           | Default                          | Description                                                 |
+| ------------------ | -------------------------------- | ----------------------------------------------------------- |
+| `NODE_ENV`         | `development`                    | Runtime environment.                                        |
+| `PORT`             | `4000`                           | API port.                                                   |
+| `CLIENT_ORIGIN`    | `http://localhost:5173`          | Allowed CORS origin.                                        |
+| `MONGODB_URI`      | — **(required)**                 | MongoDB connection string.                                  |
+| `MONGODB_DB_NAME`  | `trial-class-booking`            | Optional DB name (overrides the URI).                       |
+| `MEETING_BASE_URL` | `https://meet.jit.si`            | Base URL for generated dummy meeting links.                 |
+| `MAIL_FROM`        | `Trial Class Booking <no-reply@trialclass.local>` | From address for emails.          |
+| `SMTP_HOST`        | —                                | SMTP host. Omit to generate/log emails instead of sending.  |
+| `SMTP_PORT`        | `587`                            | SMTP port.                                                  |
+| `SMTP_SECURE`      | `false`                          | `true` for TLS (port 465).                                  |
+| `SMTP_USER`        | —                                | SMTP username.                                              |
+| `SMTP_PASS`        | —                                | SMTP password / app password.                               |
 
-| Variable          | Default                 | Description                                              |
-| ----------------- | ----------------------- | -------------------------------------------------------- |
-| `NODE_ENV`        | `development`           | Runtime environment                                      |
-| `PORT`            | `4000`                  | API port                                                 |
-| `CLIENT_ORIGIN`   | `http://localhost:5173` | Allowed CORS origin for the web                          |
-| `MONGODB_URI`     | — (required)            | MongoDB Atlas connection string                          |
-| `MONGODB_DB_NAME` | `trial-class-booking`   | Optional DB name, overrides the URI                      |
-| `MEETING_BASE_URL`| `https://meet.jit.si`   | Base URL for generated dummy meeting links               |
-| `MAIL_FROM`       | `Trial Class Booking …` | From address for booking emails                          |
-| `SMTP_HOST`       | —                       | SMTP host (e.g. `smtp.gmail.com`). Omit to log emails     |
-| `SMTP_PORT`       | `587`                   | SMTP port                                                |
-| `SMTP_SECURE`     | `false`                 | Use TLS (`true` for port 465)                            |
-| `SMTP_USER`       | —                       | SMTP username (email address)                            |
-| `SMTP_PASS`       | —                       | SMTP password / app password                             |
+> `.env` is git-ignored. `.env.example` contains placeholders only — never commit
+> real credentials.
 
-> If `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` are not set, booking emails are still
-> rendered and written to the server log instead of being delivered.
-
-### Client
+### Client (`client/.env`)
 
 ```bash
 cd client
-npm install
 cp .env.example .env
-npm run dev
 ```
-
-The Vite dev server runs at `http://localhost:5173`.
-
-Environment variables (see `client/.env.example`):
 
 | Variable       | Default                        | Description                       |
 | -------------- | ------------------------------ | --------------------------------- |
-| `VITE_API_URL` | `http://localhost:4000/api/v1` | Base URL of the booking API       |
+| `VITE_API_URL` | `http://localhost:4000/api/v1` | Base URL of the booking API.      |
 
-## Frontend
+---
 
-The single-page booking flow (`client/src/App.tsx`) lets a parent book a free
-trial class end to end:
+## Installation
 
-1. **Timezone** — the browser's IANA zone is auto-detected and can be changed
-   from a curated dropdown (`TimezoneSelect`). Every time shown afterwards is in
-   that zone.
-2. **Availability** — the client fetches availability for the next 8 IST days
-   (via **Show more days**) in parallel, keeps only `available` slots that start
-   in the future, and groups them by the parent's **local** calendar date.
-3. **Day tabs + slot grid** — `DayTabs` shows friendly labels ("Today",
-   "Tomorrow") with a slot count; `SlotGrid` shows each slot in the parent's
-   local time with the mentor's IST time underneath. Because availability is
-   loaded per IST day but displayed per local day, a late-evening US slot can
-   appear under the previous local day — correctly.
-4. **Booking** — `BookingModal` collects the parent's name, email and optional
-   child age, then POSTs to `/api/v1/bookings`. The `mentor` is omitted so the
-   server **auto-assigns** the least-loaded available mentor. Validation errors
-   are surfaced inline per field.
-5. **Confirmation** — `Confirmation` shows the assigned mentor, the time in both
-   the parent's zone and IST, a copyable dummy meeting link, and the booking ID.
-6. **Empty state** — when no mentors have open slots, a "No trial classes
-   available" state is shown with a **Show more days** action (Req 5).
+Install each package independently (two npm packages in one repo):
 
-Styling uses **Tailwind CSS v4** (configured in `client/src/index.css` via
-`@import "tailwindcss"` and the `@theme` block — no `tailwind.config.js`).
+```bash
+# Backend
+cd server
+npm install
 
+# Frontend
+cd ../client
+npm install
+```
 
-## Scripts
+---
 
-| Location | Command             | Description                    |
-| -------- | ------------------- | ------------------------------ |
-| server   | `npm run dev`       | Start API with hot reload      |
-| server   | `npm run build`     | Compile TypeScript to `dist/`  |
-| server   | `npm start`         | Run compiled API               |
-| server   | `npm run typecheck` | Type-check without emitting    |
-| server   | `npm test`          | Run the unit test suite        |
-| client   | `npm run dev`       | Start Vite dev server          |
-| client   | `npm run build`     | Type-check and build for prod  |
-| client   | `npm run lint`      | Lint the client                |
-| client   | `npm run preview`   | Preview production build       |
+## Running the App
 
-## API
+Start the API and the web app in two terminals:
 
-All endpoints are served under the base path `/api/v1`.
+```bash
+# Terminal 1 — API (http://localhost:4000)
+cd server
+npm run dev
 
-### Timezones & DST
+# Terminal 2 — Web (http://localhost:5173)
+cd client
+npm run dev
+```
 
-- Trial-class working hours are **09:00–18:00 IST (`Asia/Kolkata`)**, in 30-minute
-  slots. India has no DST, so IST is the fixed anchor.
-- Every booking request carries the parent's IANA `timezone` (e.g.
-  `America/New_York`, `Europe/London`). The server converts between the parent's
-  local wall-clock time and UTC using **`luxon`**, which resolves DST
-  transitions automatically.
-- Responses return both raw UTC instants (`startsAt`, `endsAt`) and
-  human-readable local labels (`startsAtLocal`/`endsAtLocal` in the parent's
-  zone) plus `startsAtIST`/`endsAtIST`.
-- Confirmation emails show the parent their **local** time and the mentor **IST**.
+On startup the server connects to MongoDB and **idempotently seeds the 10-mentor
+roster** (`bootstrapMentors`), so the app is immediately bookable.
 
-### Endpoints
+Production-style run:
 
-| Method | Path                              | Description                                    |
-| ------ | --------------------------------- | ---------------------------------------------- |
-| GET    | `/api/v1/health`                  | Health check                                   |
-| GET    | `/api/v1/mentors`                 | List all mentors                               |
-| GET    | `/api/v1/mentors/:id`             | Get a single mentor                            |
-| GET    | `/api/v1/bookings/availability`   | Available slots for a date                     |
-| POST   | `/api/v1/bookings`                | Create a booking                               |
-| GET    | `/api/v1/bookings/:id`            | Get a booking                                  |
+```bash
+cd server && npm run build && npm start
+cd client && npm run build && npm run preview
+```
 
-**GET `/api/v1/bookings/availability`**
+---
+
+## API Reference
+
+All endpoints are served under the base path **`/api/v1`**. Responses use a
+consistent envelope: `{ success, message, data }` (errors also include
+`errors: [{ field, message }]`).
+
+| Method | Path                            | Description                                         |
+| ------ | ------------------------------- | --------------------------------------------------- |
+| GET    | `/api/v1/health`                | Health check.                                       |
+| GET    | `/api/v1/mentors`               | List all mentors.                                   |
+| GET    | `/api/v1/mentors/:id`           | Get a single mentor.                                |
+| GET    | `/api/v1/bookings/availability` | Available slots for an IST date.                    |
+| POST   | `/api/v1/bookings`              | Create a booking (auto-assigns a mentor if omitted).|
+| GET    | `/api/v1/bookings/:id`          | Get a booking.                                      |
+
+### `GET /api/v1/bookings/availability`
 
 Query params:
 
-- `date` (required) — the IST day to inspect, `YYYY-MM-DD`.
+- `date` **(required)** — the IST day to inspect, `YYYY-MM-DD`.
 - `timezone` (optional) — IANA zone; adds `startsAtLocal`/`endsAtLocal` labels.
 - `mentor` (optional) — restrict to one mentor. If omitted, a slot is marked
   available when **at least one** mentor can take it.
 
-**POST `/api/v1/bookings`**
+Each slot includes `startsAt`/`endsAt` (UTC ISO), `startsAtIST`/`endsAtIST`,
+optional `startsAtLocal`/`endsAtLocal`, and `available`.
+
+### `POST /api/v1/bookings`
 
 ```json
 {
@@ -163,30 +218,82 @@ Query params:
 
 - `startsAt` may be a UTC ISO string **or** a wall-clock time in `timezone`
   (e.g. `"2026-10-20T09:00:00"`).
-- When `mentor` is omitted the system assigns an available mentor, preferring
-  the one with the fewest bookings that day.
-- On success the response includes the assigned mentor, a dummy `meetingLink`,
-  and local/IST formatted times. Confirmation emails are sent to the parent and
-  the mentor.
-- Errors: `409` when no mentor is available / the slot is taken, `422` for a
-  slot outside business hours or on an invalid boundary, `404` for an unknown
-  mentor.
+- When `mentor` is omitted the server assigns an available mentor, preferring the
+  one with the fewest bookings that day.
+- On success (`201`) the response includes the assigned mentor, a dummy
+  `meetingLink`, and local/IST formatted times. Confirmation emails are sent to
+  the parent and the mentor.
 
-## Health Check
+### Error codes
 
+| Status | Meaning                                                                 |
+| ------ | ----------------------------------------------------------------------- |
+| `400`  | Malformed request parameter.                                            |
+| `404`  | Unknown mentor / booking / route.                                       |
+| `409`  | No mentor available, slot taken, or a booking race lost.               |
+| `422`  | Validation failed, slot outside business hours / not on a 30-min boundary, past slot, or beyond the booking window. |
+
+---
+
+## Timezones & DST
+
+- Trial classes run **09:00–18:00 IST (`Asia/Kolkata`)** in **30-minute slots**.
+  India has no DST, so IST is the fixed anchor.
+- Every booking carries the parent's IANA `timezone`; the server resolves it with
+  **luxon**, so US/UK DST transitions are handled automatically.
+- Responses return both raw UTC instants and human-readable labels in the
+  parent's zone and IST. Emails show the parent their local time and the mentor
+  IST.
+
+## Booking Rules
+
+- 30-minute slots on exact `:00`/`:30` IST boundaries inside 09:00–18:00 IST.
+- Max **2 confirmed classes per mentor per IST calendar day**.
+- No past bookings; bookings allowed from now through **30 days ahead**.
+- Overlap conflicts are prevented inside a MongoDB transaction, and the unique
+  `{ mentor, startsAt }` index guards against concurrent double-booking.
+
+---
+
+## Testing & Checks
+
+### Server (`server/`)
+
+```bash
+npm run typecheck       # tsc --noEmit
+npm run typecheck:test  # type-check src + tests (tsconfig.test.json)
+npm test                # node:test unit suite (20 tests, no live DB required)
+npm run build           # compile to dist/
 ```
-GET /api/v1/health
+
+The test suite (`server/test/`) covers timezone/DST resolution, the IST business
+window, meeting-link generation, the booking/availability Zod schemas, the unique
+slot index, and the required `timezone` field. It uses `node:test` with `tsx` and
+does **not** require a running MongoDB, because it only exercises pure
+utilities, schemas, and schema metadata.
+
+### Client (`client/`)
+
+```bash
+npm run lint     # oxlint
+npm run build    # tsc -b && vite build
+npm run preview  # serve the production build
 ```
 
-Returns:
+---
 
-```json
-{
-  "status": "ok",
-  "service": "trial-class-booking-server",
-  "timestamp": "2026-10-10T06:56:09.337Z"
-}
-```
+## Security Notes
+
+- Helmet sets security headers; CORS is restricted to `CLIENT_ORIGIN`.
+- JSON/urlencoded request bodies are capped at `16kb`.
+- All input is validated with Zod **before** reaching controllers/services.
+- No secrets are committed — `.env` is git-ignored and `.env.example` holds
+  placeholders only.
+- There is **no authentication** (parents are identified by submitted details) and
+  **no cancellation** feature, per the agreed scope.
+- Not implemented (out of scope): API rate limiting.
+
+---
 
 ## Status
 
@@ -194,4 +301,4 @@ Returns:
 - [x] Phase 2 — Database models, seed data, availability API
 - [x] Phase 3 — Booking creation and business rules (timezones, DST, meeting link, emails)
 - [x] Phase 4 — Frontend booking flow (timezone-aware booking UI)
-- [ ] Phase 5 — Polish and documentation
+- [x] Phase 5 — Polish, tests, and documentation
