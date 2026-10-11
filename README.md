@@ -56,10 +56,46 @@ Environment variables (see `server/.env.example`):
 ```bash
 cd client
 npm install
+cp .env.example .env
 npm run dev
 ```
 
 The Vite dev server runs at `http://localhost:5173`.
+
+Environment variables (see `client/.env.example`):
+
+| Variable       | Default                        | Description                       |
+| -------------- | ------------------------------ | --------------------------------- |
+| `VITE_API_URL` | `http://localhost:4000/api/v1` | Base URL of the booking API       |
+
+## Frontend
+
+The single-page booking flow (`client/src/App.tsx`) lets a parent book a free
+trial class end to end:
+
+1. **Timezone** — the browser's IANA zone is auto-detected and can be changed
+   from a curated dropdown (`TimezoneSelect`). Every time shown afterwards is in
+   that zone.
+2. **Availability** — the client fetches availability for the next 8 IST days
+   (via **Show more days**) in parallel, keeps only `available` slots that start
+   in the future, and groups them by the parent's **local** calendar date.
+3. **Day tabs + slot grid** — `DayTabs` shows friendly labels ("Today",
+   "Tomorrow") with a slot count; `SlotGrid` shows each slot in the parent's
+   local time with the mentor's IST time underneath. Because availability is
+   loaded per IST day but displayed per local day, a late-evening US slot can
+   appear under the previous local day — correctly.
+4. **Booking** — `BookingModal` collects the parent's name, email and optional
+   child age, then POSTs to `/api/v1/bookings`. The `mentor` is omitted so the
+   server **auto-assigns** the least-loaded available mentor. Validation errors
+   are surfaced inline per field.
+5. **Confirmation** — `Confirmation` shows the assigned mentor, the time in both
+   the parent's zone and IST, a copyable dummy meeting link, and the booking ID.
+6. **Empty state** — when no mentors have open slots, a "No trial classes
+   available" state is shown with a **Show more days** action (Req 5).
+
+Styling uses **Tailwind CSS v4** (configured in `client/src/index.css` via
+`@import "tailwindcss"` and the `@theme` block — no `tailwind.config.js`).
+
 
 ## Scripts
 
@@ -69,6 +105,7 @@ The Vite dev server runs at `http://localhost:5173`.
 | server   | `npm run build`     | Compile TypeScript to `dist/`  |
 | server   | `npm start`         | Run compiled API               |
 | server   | `npm run typecheck` | Type-check without emitting    |
+| server   | `npm test`          | Run the unit test suite        |
 | client   | `npm run dev`       | Start Vite dev server          |
 | client   | `npm run build`     | Type-check and build for prod  |
 | client   | `npm run lint`      | Lint the client                |
@@ -156,5 +193,5 @@ Returns:
 - [x] Phase 1 — Project setup (scaffolding, health endpoint)
 - [x] Phase 2 — Database models, seed data, availability API
 - [x] Phase 3 — Booking creation and business rules (timezones, DST, meeting link, emails)
-- [ ] Phase 4 — Frontend booking flow
+- [x] Phase 4 — Frontend booking flow (timezone-aware booking UI)
 - [ ] Phase 5 — Polish and documentation

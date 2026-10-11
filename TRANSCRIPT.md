@@ -533,3 +533,62 @@ Added luxon (a DST-aware library) and a single timezone module:
 
 - README.md — new /api/v1 base path, env table (MEETING*BASE_URL, MAIL_FROM, SMTP*\*), a Timezones & DST section, endpoint reference, and updated status checklist.
 - .env.example already documents the new vars.
+
+## 11. Phase 7: Frontend booking flow & UI/UX polish
+
+**User:** Build the full frontend so the product is complete, then revise the UI/UX to a senior-designer standard, add the leftover server hardening/tests, and update this transcript for the GitHub push.
+
+**Agent:**
+
+### Frontend (`client/`)
+
+React 19 + Vite + TypeScript, styled with **Tailwind CSS v4** (design tokens live in `src/index.css` via `@theme` — no `tailwind.config.js`).
+
+Full single-page flow:
+
+1. **Timezone** — the visitor's IANA zone is auto-detected and can be changed from a dropdown. Every time shown afterwards is in that zone.
+2. **Availability** — fetches the next 8 IST days in parallel, keeps only `available` + future slots, and groups them by the parent's **local** calendar date (so a 9:00 AM IST slot appears on the correct US evening).
+3. **Day tabs + slot grid** — local time is primary ("11:30 PM"), the end time and the mentor's IST time are secondary; DST-safe because all grouping/conversion uses `Intl` with the IANA zone.
+4. **Booking modal** — collects parent name/email/age; `mentor` is omitted so the server **auto-assigns** the least-loaded available mentor. Validation errors render inline per field.
+5. **Confirmation** — assigned mentor, time in both the parent's zone and IST, a "Join meeting" button with copy-to-clipboard feedback, and the booking ID.
+6. **Empty / error states** — a friendly "No trial classes available" card with a **Show more days** action (covers Req 5).
+
+Files: `client/src/App.tsx`; components (`Header`, `DayTabs`, `SlotGrid`, `BookingModal`, `Confirmation`, `TimezoneSelect`, `Status`); lib (`api`, `time`, `types`); `vite.config.ts`; `index.css`.
+
+### UI/UX revision
+
+- Design tokens in Tailwind `@theme` — indigo brand palette, soft/card/lift shadows, `fade-in-up` and `scale-in` keyframes, reduced-motion support.
+- Soft radial brand glows behind the page for depth without noise.
+- Sticky glass header with a gradient logo mark, a pulsing "10 mentors ready" badge, and an IST hours pill.
+- Gradient hero that leads with the differentiator ("Book a live coding class that fits **your timezone**"), feature chips (10 mentors · 30 min · free · any timezone), and a glass timezone control.
+- Slot cards: local time bold, "until …" end time, IST pill; hover lift + ring.
+- Day tabs: Today/Tomorrow labels + count badges, active gradient state, thin scrollbar.
+- Modal: gradient summary header (local + mentor time), inline field errors, a "What happens next" reassurance block, loading/disabled button states.
+- Confirmation: celebratory gradient banner, receipt-style details, gradient "Join meeting" CTA + copy feedback.
+- Accessibility: labels → `htmlFor`, `aria-*` roles/labels, `aria-pressed` tabs, focus-visible rings, `<html lang="en">`.
+
+### Server hardening + tests
+
+- The race-condition guard (unique compound index `{ mentor, startsAt }`) already existed in `booking.model.ts`; it is now covered by a dedicated test.
+- New dependency-free test suite (`node:test` + `tsx`) in `server/test/` — **20 tests passing**:
+  - `time.test.ts` — DST across the US spring-forward (EST `14:00Z` → EDT `13:00Z`) and UK GMT↔BST, naive wall-clock resolution, IST business window, 30-min boundaries.
+  - `meeting.test.ts` — link format under `MEETING_BASE_URL` + uniqueness.
+  - `booking.test.ts` — booking/availability Zod schemas, the `{ mentor, startsAt }` unique index, required `timezone` field.
+- Scripts: `npm test`, `npm run typecheck:test` (`tsconfig.test.json`).
+
+### Verification (live, against the built server)
+
+- `health` → 200; `GET /bookings/availability` → 200 (18 slots for an IST day; sample: `startsAtIST "9:00 AM"`, `startsAtLocal "11:30 PM"`).
+- `POST /bookings` (no mentor) → 201 with auto-assigned mentor `{ _id, name, email }`, `meetingLink` (`https://meet.jit.si/trial-class-<hex>`), and local + IST formatted times; `GET /bookings/:id` → 200.
+- Emails (SMTP blanked during the test → rendered JSON): the **parent** email shows the slot in the parent's local time; the **mentor** email shows IST; both embed the meeting link.
+- Client: `npm run build` (tsc -b + vite) and `npm run lint` (oxlint) both clean; `vite preview` serves 200.
+
+### Status vs requirements
+
+- Req 1 (timezones) — parent zone chosen in UI; every screen/email shows the parent's local time, mentors in IST. ✅
+- Req 2 (DST) — luxon on the server; `Intl` zone-aware grouping on the client. ✅
+- Req 3 (dummy meeting link) — generated, stored, returned, emailed, and shown/copyable in the UI. ✅
+- Req 4 (max 2 / mentor / day) — enforced inside the booking transaction + backed by the unique index; auto-assign spreads load fairly. ✅
+- Req 5 (no-availability error) — UI empty state, `available: false` slots + `remainingSlots` from the API, clear 404/409/422 messages. ✅
+
+**Known deferred item (not in the rubric):** if two requests race for the exact same mentor + slot, the unique index throws `E11000`, which currently surfaces as a 500. A follow-up could map duplicate-key/validation errors to friendly 409/422 responses.
