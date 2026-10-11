@@ -7,7 +7,7 @@ export interface IBooking extends Document {
   childAge?: number;
   startsAt: Date;
   endsAt: Date;
-  status: "pending" | "confirmed";
+  status: "pending" | "confirmed" | "cancelled";
   timezone: string;
   meetingLink?: string;
   createdAt: Date;
