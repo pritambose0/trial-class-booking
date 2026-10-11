@@ -3,44 +3,46 @@ import { z, ZodError } from "zod";
 import { ApiError } from "../utils/ApiError.js";
 
 /**
- * Zod validation middleware.
+ * Reusable Zod validation middleware.
  *
- * Parses { body, query, params } through the provided schema.
- * After successful parse, the transformed values are written back to the
- * request object so controllers see the coerced/sanitised data
- * (e.g. emails lowercased, dates converted to Date objects, etc.).
+ * Accepts a map of request sections to schemas, e.g.
+ *   validate({ body: createBookingSchema })
+ *   validate({ query: getAvailabilitySchema })
+ *   validate({ params: getBookingByIdSchema })
+ *
+ * Each section is parsed independently and the *transformed* values are written
+ * back onto the request, so controllers and services see clean data (emails
+ * lowercased, trimmed strings, etc.). Validation failures become a consistent
+ * `422` `ApiError` with per-field messages.
  */
-export const validate = (schema: z.ZodSchema) => {
+interface ValidationSchemas {
+  body?: z.ZodType;
+  query?: z.ZodType;
+  params?: z.ZodType;
+}
+
+export const validate = (schemas: ValidationSchemas) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     try {
-      const parsed = await schema.parseAsync({
-        body: req.body,
-        query: req.query,
-        params: req.params,
-      });
+      if (schemas.body) {
+        req.body = schemas.body.parse(req.body);
+      }
 
-      // Write transformed data back so controllers see clean values.
-      if (parsed && typeof parsed === "object") {
-        const source = parsed as Record<string, unknown>;
+      if (schemas.params) {
+        req.params = schemas.params.parse(req.params) as Request["params"];
+      }
 
-        if ("body" in source) {
-          req.body = source.body;
-        }
-
-        if ("params" in source) {
-          req.params = source.params as Record<string, string>;
-        }
+      if (schemas.query) {
+        const parsedQuery = schemas.query.parse(req.query);
 
         // In Express 5 `req.query` is a getter-only property on the prototype,
         // so it cannot be reassigned. Redefine an own property to shadow it.
-        if ("query" in source) {
-          Object.defineProperty(req, "query", {
-            value: source.query,
-            writable: true,
-            configurable: true,
-            enumerable: true,
-          });
-        }
+        Object.defineProperty(req, "query", {
+          value: parsedQuery,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
       }
 
       next();

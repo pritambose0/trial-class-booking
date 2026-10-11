@@ -6,6 +6,6 @@ import { getMentorByIdSchema } from "../validators/mentor.validator.js";
 const router = Router();
 
 router.route("/").get(getMentors);
-router.route("/:id").get(validate(getMentorByIdSchema), getMentorById);
+router.route("/:id").get(validate({ params: getMentorByIdSchema }), getMentorById);
 
 export default router;

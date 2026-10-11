@@ -6,17 +6,17 @@ import {
 } from "../services/booking.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { validate } from "../utils/validate.js";
-import {
-  createBookingSchema,
-  getAvailabilitySchema,
-  getBookingByIdSchema,
+import type {
+  CreateBookingInput,
+  GetAvailabilityInput,
+  GetBookingByIdInput,
 } from "../validators/booking.validator.js";
 
-// GET /api/bookings/availability?mentor=<id>&date=<YYYY-MM-DD>
+// GET /api/v1/bookings/availability
+// Query is validated (and transformed) by the validate middleware in the route.
 export const getAvailability = asyncHandler(
   async (req: Request, res: Response) => {
-    const query = validate(getAvailabilitySchema, req.query);
+    const query = req.query as unknown as GetAvailabilityInput;
 
     const slots = await getAvailableSlots(query);
 
@@ -26,10 +26,11 @@ export const getAvailability = asyncHandler(
   },
 );
 
-// POST /api/bookings
+// POST /api/v1/bookings
+// Body is validated (and transformed) by the validate middleware in the route.
 export const createBooking = asyncHandler(
   async (req: Request, res: Response) => {
-    const body = validate(createBookingSchema, req.body);
+    const body = req.body as CreateBookingInput;
 
     const newBooking = await createBookingService(body);
 
@@ -39,10 +40,11 @@ export const createBooking = asyncHandler(
   },
 );
 
-// GET /api/bookings/:id
+// GET /api/v1/bookings/:id
+// Params are validated by the validate middleware in the route.
 export const getBookingById = asyncHandler(
   async (req: Request, res: Response) => {
-    const params = validate(getBookingByIdSchema, req.params);
+    const params = req.params as unknown as GetBookingByIdInput;
 
     const booking = await getBookingByIdService(params);
 
