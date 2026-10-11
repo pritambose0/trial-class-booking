@@ -54,14 +54,6 @@ export const formatTime = (iso: string | Date, timeZone: string): string =>
     minute: "2-digit",
   }).format(typeof iso === "string" ? new Date(iso) : iso);
 
-export const formatDayLabel = (iso: string | Date, timeZone: string): string =>
-  new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(typeof iso === "string" ? new Date(iso) : iso);
-
 export const formatDayShort = (iso: string | Date, timeZone: string): string =>
   new Intl.DateTimeFormat("en-US", {
     timeZone,

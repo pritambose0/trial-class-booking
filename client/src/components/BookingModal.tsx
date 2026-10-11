@@ -26,11 +26,15 @@ const BookingModal = ({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !submitting) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, submitting]);
+
+  const requestClose = () => {
+    if (!submitting) onClose();
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -89,7 +93,7 @@ const BookingModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-4"
-      onClick={onClose}
+      onClick={requestClose}
       role="presentation"
     >
       <div
@@ -119,9 +123,10 @@ const BookingModal = ({
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
+              disabled={submitting}
               aria-label="Close booking form"
-              className="rounded-full p-1.5 text-brand-100 transition hover:bg-white/15 hover:text-white"
+              className="rounded-full p-1.5 text-brand-100 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg
                 className="size-5"
@@ -153,6 +158,7 @@ const BookingModal = ({
                 minLength={2}
                 maxLength={100}
                 autoComplete="name"
+                autoFocus
                 value={parentName}
                 onChange={(event) => setParentName(event.target.value)}
                 placeholder="Jane Doe"
