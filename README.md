@@ -261,11 +261,12 @@ optional `startsAtLocal`/`endsAtLocal`, and `available`.
 ### Server (`server/`)
 
 ```bash
-npm run typecheck       # tsc --noEmit
-npm run typecheck:test  # type-check src + tests (tsconfig.test.json)
-npm test                # node:test unit suite (28 tests, no live DB required)
-npm run test:integration # transaction/DB integration tests (needs a replica set)
-npm run build           # compile to dist/
+npm run typecheck            # tsc --noEmit
+npm run typecheck:test       # type-check src + tests (tsconfig.test.json)
+npm test                     # node:test unit suite (28 tests, no live DB required)
+npm run test:integration       # integration tests against a local replica set
+npm run test:integration:atlas # same tests, using MONGODB_URI from .env (Atlas)
+npm run build                # compile to dist/
 ```
 
 The unit suite (`server/test/*.test.ts`) covers timezone/DST resolution, the IST
@@ -281,14 +282,33 @@ every slot is `available: false`, and the next booking gets a `409`) and the
 concurrency path: two simultaneous requests for the same slot must produce
 exactly one booking and one `409`, never a double-booking or a `500`. Because
 bookings run in a transaction, it **requires a replica set** and a database whose
-name contains `test` (the test refuses to run otherwise). Point it at your own
-cluster:
+name contains `test` (the test refuses to run otherwise).
+
+Run it against a **local replica set** (expects `mongodb://127.0.0.1:27017/…?replicaSet=rs0`):
 
 ```bash
 cd server
-MONGODB_URI='mongodb://127.0.0.1:27017/trial-class-booking-test?replicaSet=rs0' \
-  npm run test:integration
+npm run test:integration
 ```
+
+Start one with Docker if you don't have MongoDB running locally:
+
+```bash
+docker run -d --name mongo-rs -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec mongo-rs mongosh --eval "rs.initiate()"
+```
+
+Or run the same tests against **MongoDB Atlas** — no local database needed, it
+reuses `MONGODB_URI` from `server/.env`:
+
+```bash
+cd server
+npm run test:integration:atlas
+```
+
+Both variants always connect to a separate database whose name contains `test`
+(default `trial-class-booking-integration-test`), so application data is never
+touched, and `SMTP_HOST=` keeps booking emails as logs instead of sending them.
 
 
 ### Client (`client/`)

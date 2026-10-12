@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "test": "MONGODB_URI=mongodb://127.0.0.1:27017/trial-class-booking-test node --import tsx --test test/*.test.ts",
-    "test:integration": "MONGODB_URI=mongodb://127.0.0.1:27017/trial-class-booking-test?replicaSet=rs0 MONGODB_TEST_DB_NAME=trial-class-booking-integration-test SMTP_HOST= node --import tsx --test --test-concurrency=1 test/integration/*.test.ts"
+    "test:integration": "MONGODB_URI=mongodb://127.0.0.1:27017/trial-class-booking-test?replicaSet=rs0 MONGODB_TEST_DB_NAME=trial-class-booking-integration-test SMTP_HOST= node --import tsx --test --test-concurrency=1 test/integration/*.test.ts",
+    "test:integration:atlas": "MONGODB_TEST_DB_NAME=trial-class-booking-integration-test SMTP_HOST= node --env-file=.env --import tsx --test --test-concurrency=1 test/integration/*.test.ts"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
