@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { isValidTimeZone, parseStartTime } from "../utils/time.js";
+import {
+  MAX_CHILD_AGE,
+  MAX_PARENT_NAME_LENGTH,
+  MIN_CHILD_AGE,
+  MIN_PARENT_NAME_LENGTH,
+} from "../constants.js";
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid ID format");
 
@@ -34,8 +40,14 @@ export const createBookingSchema = z
     parentName: z
       .string()
       .trim()
-      .min(2, "Parent name must be at least 2 characters")
-      .max(100, "Parent name cannot exceed 100 characters"),
+      .min(
+        MIN_PARENT_NAME_LENGTH,
+        `Parent name must be at least ${MIN_PARENT_NAME_LENGTH} characters`,
+      )
+      .max(
+        MAX_PARENT_NAME_LENGTH,
+        `Parent name cannot exceed ${MAX_PARENT_NAME_LENGTH} characters`,
+      ),
 
     parentEmail: z
       .email("Invalid email address")
@@ -44,8 +56,8 @@ export const createBookingSchema = z
     childAge: z
       .number()
       .int("Child age must be a whole number")
-      .min(3, "Child must be at least 3 years old")
-      .max(18, "Child age cannot exceed 18 years")
+      .min(MIN_CHILD_AGE, `Child must be at least ${MIN_CHILD_AGE} years old`)
+      .max(MAX_CHILD_AGE, `Child age cannot exceed ${MAX_CHILD_AGE} years`)
       .optional(),
 
     timezone,

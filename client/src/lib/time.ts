@@ -1,5 +1,3 @@
-export const IST_ZONE = "Asia/Kolkata";
-
 export const COMMON_TIMEZONES = [
   "America/New_York",
   "America/Chicago",
@@ -83,4 +81,62 @@ export const relativeDayLabel = (dateKey: string, todayKey: string): string => {
     month: "short",
     day: "numeric",
   }).format(new Date(Date.UTC(year, month - 1, day)));
+};
+
+// A compact GMT offset for a zone, e.g. "GMT-4" or "GMT+5:30".
+export const zoneOffsetLabel = (
+  timeZone: string,
+  at: Date = new Date(),
+): string => {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "shortOffset",
+    }).formatToParts(at);
+    return parts.find((part) => part.type === "timeZoneName")?.value ?? "";
+  } catch {
+    return "";
+  }
+};
+
+// A parent-friendly zone label, e.g. "New York (GMT-4)".
+export const formatZoneLabel = (timeZone: string): string => {
+  const city =
+    timeZone.split("/").pop()?.replace(/_/g, " ") || "your timezone";
+  const offset = zoneOffsetLabel(timeZone);
+  return offset ? `${city} (${offset})` : city;
+};
+
+const SUPPORTED_ZONES: string[] | null = (() => {
+  try {
+    const supported = (
+      Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+    ).supportedValuesOf;
+    const zones = typeof supported === "function" ? supported("timeZone") : null;
+    return zones && zones.length > 0 ? zones : null;
+  } catch {
+    return null;
+  }
+})();
+
+export interface TimezoneGroups {
+  common: string[];
+  all: string[];
+}
+
+// The visitor's detected zone plus a curated shortlist, backed by the full IANA
+// database when the browser exposes it.
+export const getTimezoneGroups = (current: string): TimezoneGroups => {
+  const commonSet = new Set(COMMON_TIMEZONES);
+  if (current) commonSet.add(current);
+
+  const common = Array.from(commonSet).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  const all = (SUPPORTED_ZONES ?? COMMON_TIMEZONES)
+    .filter((zone) => !commonSet.has(zone))
+    .sort((a, b) => a.localeCompare(b));
+
+  return { common, all };
 };

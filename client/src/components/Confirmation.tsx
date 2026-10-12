@@ -1,10 +1,11 @@
 import { useState } from "react";
 import {
-  IST_ZONE,
   formatDayShort,
   formatFullDateTime,
   formatTime,
+  formatZoneLabel,
 } from "../lib/time";
+import { IST_ZONE } from "../constants";
 import type { Booking } from "../lib/types";
 
 interface ConfirmationProps {
@@ -25,16 +26,33 @@ const Confirmation = ({ booking, onReset }: ConfirmationProps) => {
     }
   };
 
+  const details = [
+    {
+      label: "Your mentor",
+      value: booking.mentor?.name ?? "Assigned mentor",
+    },
+    {
+      label: "When (your time)",
+      value: `${formatDayShort(booking.startsAt, booking.timezone)} · ${formatTime(booking.startsAt, booking.timezone)} – ${formatTime(booking.endsAt, booking.timezone)} (${formatZoneLabel(booking.timezone)})`,
+    },
+    {
+      label: "Mentor's time (IST)",
+      value: formatFullDateTime(booking.startsAt, IST_ZONE),
+    },
+  ];
+
+  const nextSteps = [
+    "We've matched you with a mentor and emailed the details.",
+    "Open the live link a few minutes before your class.",
+    "Join from any laptop or tablet — no downloads needed.",
+  ];
+
   return (
     <div className="overflow-hidden rounded-3xl bg-white shadow-card ring-1 ring-slate-200 animate-fade-in-up">
-      <div className="relative bg-linear-to-br from-emerald-500 to-teal-600 px-6 py-8 text-center text-white">
-        <div
-          className="absolute -top-10 left-1/2 size-40 -translate-x-1/2 rounded-full bg-white/15 blur-2xl"
-          aria-hidden="true"
-        />
-        <span className="relative mx-auto flex size-16 items-center justify-center rounded-full bg-white/20 ring-4 ring-white/25">
+      <div className="bg-emerald-500 px-6 py-8 text-center text-white">
+        <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-white/20 ring-4 ring-white/20">
           <svg
-            className="size-8"
+            className="size-7"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -48,40 +66,31 @@ const Confirmation = ({ booking, onReset }: ConfirmationProps) => {
             />
           </svg>
         </span>
-        <h2 className="relative mt-4 text-2xl font-extrabold">
-          Your class is booked!
-        </h2>
-        <p className="relative mt-1 text-sm text-emerald-50">
-          We emailed the link to{" "}
-          <span className="font-semibold">{booking.parentEmail}</span>
+        <h1 className="mt-4 text-2xl font-extrabold">Your class is booked!</h1>
+        <p className="mx-auto mt-1 max-w-md text-sm text-emerald-50">
+          We emailed a confirmation to{" "}
+          <span className="font-semibold text-white">
+            {booking.parentEmail}
+          </span>
         </p>
       </div>
 
       <div className="p-6 sm:p-8">
-        <dl className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-slate-50/50">
-          <div className="flex items-start justify-between gap-4 px-4 py-3.5">
-            <dt className="text-sm text-slate-500">Your mentor</dt>
-            <dd className="text-right text-sm font-semibold text-slate-900">
-              {booking.mentor?.name ?? "Assigned mentor"}
-            </dd>
-          </div>
-          <div className="flex items-start justify-between gap-4 px-4 py-3.5">
-            <dt className="text-sm text-slate-500">When (your time)</dt>
-            <dd className="text-right text-sm font-semibold text-slate-900">
-              {formatDayShort(booking.startsAt, booking.timezone)} ·{" "}
-              {formatTime(booking.startsAt, booking.timezone)} –{" "}
-              {formatTime(booking.endsAt, booking.timezone)}
-            </dd>
-          </div>
-          <div className="flex items-start justify-between gap-4 px-4 py-3.5">
-            <dt className="text-sm text-slate-500">Mentor&apos;s time (IST)</dt>
-            <dd className="text-right text-sm font-semibold text-slate-900">
-              {formatFullDateTime(booking.startsAt, IST_ZONE)}
-            </dd>
-          </div>
-          <div className="flex items-start justify-between gap-4 px-4 py-3.5">
+        <dl className="divide-y divide-slate-100 rounded-2xl border border-slate-200">
+          {details.map(({ label, value }) => (
+            <div
+              key={label}
+              className="flex flex-col justify-between gap-1 px-4 py-3.5 sm:flex-row sm:items-start sm:gap-4"
+            >
+              <dt className="text-sm text-slate-500">{label}</dt>
+              <dd className="text-left text-sm font-semibold text-slate-900 sm:max-w-[60%] sm:text-right">
+                {value}
+              </dd>
+            </div>
+          ))}
+          <div className="flex flex-col justify-between gap-1 px-4 py-3.5 sm:flex-row sm:items-start sm:gap-4">
             <dt className="text-sm text-slate-500">Booking ID</dt>
-            <dd className="break-all text-right text-xs font-medium text-slate-500">
+            <dd className="break-all text-left text-xs font-medium text-slate-500 sm:text-right">
               {booking._id}
             </dd>
           </div>
@@ -114,7 +123,7 @@ const Confirmation = ({ booking, onReset }: ConfirmationProps) => {
               target="_blank"
               rel="noreferrer"
               title={booking.meetingLink}
-              className="flex-1 truncate rounded-xl bg-linear-to-r from-brand-700 to-indigo-600 px-4 py-2.5 text-center text-sm font-bold text-white shadow-card transition hover:brightness-110 active:scale-[0.99]"
+              className="flex-1 truncate rounded-xl bg-brand-600 px-4 py-2.5 text-center text-sm font-bold text-white shadow-card transition hover:bg-brand-700 active:scale-[0.99]"
             >
               Join meeting
             </a>
@@ -137,6 +146,28 @@ const Confirmation = ({ booking, onReset }: ConfirmationProps) => {
               {copied ? "Copied!" : "Copy link"}
             </button>
           </div>
+          <p className="mt-2.5 truncate text-xs text-slate-500" title={booking.meetingLink}>
+            {booking.meetingLink}
+          </p>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-slate-200 px-4 py-3.5">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            What happens next
+          </p>
+          <ol className="mt-2 space-y-2">
+            {nextSteps.map((step, index) => (
+              <li
+                key={step}
+                className="flex items-start gap-2.5 text-sm text-slate-600"
+              >
+                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-500">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
+          </ol>
         </div>
 
         <button

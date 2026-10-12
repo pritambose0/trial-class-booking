@@ -1,5 +1,5 @@
-import { Types } from "mongoose";
-import { Booking } from "../models/booking.model.js";
+import { Types, type HydratedDocument } from "mongoose";
+import { Booking, type IBooking } from "../models/booking.model.js";
 import { Mentor } from "../models/mentor.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import logger from "../lib/logger.js";
@@ -16,14 +16,17 @@ import {
   istBusinessWindowForDate,
   istBusinessWindowForInstant,
   istMinutesSinceDayOpen,
-  IST_ZONE,
   parseStartTime,
 } from "../utils/time.js";
-
-const SLOT_DURATION_MS = 30 * 60 * 1000; // 30 minutes
-const MAX_DAILY_BOOKINGS_PER_MENTOR = 2;
-const MAX_ADVANCE_DAYS = 30;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+import {
+  IST_ZONE,
+  MAX_ADVANCE_DAYS,
+  MAX_DAILY_BOOKINGS_PER_MENTOR,
+  MAX_TRANSACTION_ATTEMPTS,
+  MS_PER_DAY,
+  SLOT_BOUNDARY_MINUTES,
+  SLOT_DURATION_MS,
+} from "../constants.js";
 
 interface Slot {
   startsAt: string;
@@ -70,6 +73,21 @@ type ActiveBooking = {
   mentor: Types.ObjectId;
   startsAt: Date;
   endsAt: Date;
+};
+
+type AssignedMentor = {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+};
+
+// MongoDB labels a concurrent write conflict inside a transaction with this
+// error label. The recommended handling is to retry the transaction, which lets
+// the loser re-read the winning booking and either pick another free mentor or
+// return a clean conflict instead of a spare 500.
+const isTransientTransactionError = (error: unknown): boolean => {
+  const labels = (error as { errorLabels?: unknown } | null)?.errorLabels;
+  return Array.isArray(labels) && labels.includes("TransientTransactionError");
 };
 
 const isSlotTaken = (
@@ -226,7 +244,7 @@ export const createBooking = async (input: CreateBookingInput) => {
 
   // Slot must start on an exact 30-minute boundary in IST (e.g. :00 or :30).
   const minutesIST = Math.round(istMinutesSinceDayOpen(utcStart));
-  if (minutesIST % 30 !== 0) {
+  if (minutesIST % SLOT_BOUNDARY_MINUTES !== 0) {
     throw new ApiError(
       422,
       "Trial classes must start on a 30-minute boundary (e.g. 09:00, 09:30 IST)",
@@ -249,152 +267,174 @@ export const createBooking = async (input: CreateBookingInput) => {
   // Generate a unique dummy meeting link for this trial class.
   const meetingLink = generateMeetingLink();
 
-  // MongoDB session + transaction
+  // MongoDB session + transaction. Assignment and insert must be atomic, and
+  // the unique `{ mentor, startsAt }` index is the last guard against a
+  // double-booking. Under concurrency MongoDB can abort the losing transaction
+  // with a transient write conflict instead of a duplicate-key error, so we
+  // retry it: the retry re-reads the winning booking and either assigns another
+  // free mentor or returns a clean 409.
   const session = await Booking.startSession();
 
+  let assignedMentor: AssignedMentor | undefined;
+  let booking: HydratedDocument<IBooking> | undefined;
+
   try {
-    session.startTransaction();
+    for (let attempt = 1; ; attempt += 1) {
+      session.startTransaction();
 
-    // Snapshot all active bookings for this IST day. Used to check both the
-    // per-mentor daily cap and slot conflicts inside the transaction.
-    const activeBookings = await Booking.find(
-      {
-        status: { $in: ["pending", "confirmed"] },
-        startsAt: { $gte: dayOpen, $lt: dayClose },
-      },
-      null,
-      { session },
-    )
-      .select("mentor startsAt endsAt")
-      .lean();
+      try {
+        // Snapshot all active bookings for this IST day. Used to check both the
+        // per-mentor daily cap and slot conflicts inside the transaction.
+        const activeBookings = await Booking.find(
+          {
+            status: { $in: ["pending", "confirmed"] },
+            startsAt: { $gte: dayOpen, $lt: dayClose },
+          },
+          null,
+          { session },
+        )
+          .select("mentor startsAt endsAt")
+          .lean();
 
-    const bookingCounts = new Map<string, number>();
-    const bookingsByMentor = new Map<string, ActiveBooking[]>();
-    for (const booking of activeBookings) {
-      const key = booking.mentor.toString();
-      bookingCounts.set(key, (bookingCounts.get(key) ?? 0) + 1);
+        const bookingCounts = new Map<string, number>();
+        const bookingsByMentor = new Map<string, ActiveBooking[]>();
+        for (const activeBooking of activeBookings) {
+          const key = activeBooking.mentor.toString();
+          bookingCounts.set(key, (bookingCounts.get(key) ?? 0) + 1);
 
-      const list = bookingsByMentor.get(key) ?? [];
-      list.push(booking);
-      bookingsByMentor.set(key, list);
-    }
+          const list = bookingsByMentor.get(key) ?? [];
+          list.push(activeBooking);
+          bookingsByMentor.set(key, list);
+        }
 
-    const isMentorFree = (mentorId: Types.ObjectId): boolean => {
-      const key = mentorId.toString();
-      if ((bookingCounts.get(key) ?? 0) >= MAX_DAILY_BOOKINGS_PER_MENTOR) {
-        return false;
-      }
-      const list = bookingsByMentor.get(key) ?? [];
-      return !isSlotTaken(utcStart.getTime(), utcEnd.getTime(), list);
-    };
+        const isMentorFree = (mentorId: Types.ObjectId): boolean => {
+          const key = mentorId.toString();
+          if ((bookingCounts.get(key) ?? 0) >= MAX_DAILY_BOOKINGS_PER_MENTOR) {
+            return false;
+          }
+          const list = bookingsByMentor.get(key) ?? [];
+          return !isSlotTaken(utcStart.getTime(), utcEnd.getTime(), list);
+        };
 
-    // Choose the mentor:
-    //  - explicit `mentor` → verify that mentor is still available;
-    //  - otherwise assign any available mentor (preferring the one with the
-    //    fewest bookings today, so load is spread fairly).
-    const mentors = await Mentor.find({}).select("name email").lean();
-    if (mentors.length === 0) {
-      await session.abortTransaction();
-      throw new ApiError(
-        409,
-        "No mentors are currently available to take a trial class",
-      );
-    }
+        // Choose the mentor:
+        //  - explicit `mentor` → verify that mentor is still available;
+        //  - otherwise assign any available mentor (preferring the one with the
+        //    fewest bookings today, so load is spread fairly).
+        const mentors = await Mentor.find({}).select("name email").lean();
+        if (mentors.length === 0) {
+          throw new ApiError(
+            409,
+            "No mentors are currently available to take a trial class",
+          );
+        }
 
-    let assignedMentor;
-    if (requestedMentorId) {
-      const mentor = mentors.find(
-        (m) => m._id.toString() === requestedMentorId,
-      );
-      if (!mentor) {
-        await session.abortTransaction();
-        throw new ApiError(404, "Mentor not found");
-      }
-      if (!isMentorFree(mentor._id)) {
-        await session.abortTransaction();
-        throw new ApiError(
-          409,
-          "This mentor is no longer available for the requested time slot",
+        if (requestedMentorId) {
+          const mentor = mentors.find(
+            (m) => m._id.toString() === requestedMentorId,
+          );
+          if (!mentor) {
+            throw new ApiError(404, "Mentor not found");
+          }
+          if (!isMentorFree(mentor._id)) {
+            throw new ApiError(
+              409,
+              "This mentor is no longer available for the requested time slot",
+            );
+          }
+          assignedMentor = mentor;
+        } else {
+          const candidates = mentors.filter((m) => isMentorFree(m._id));
+          if (candidates.length === 0) {
+            throw new ApiError(
+              409,
+              "No mentors are available for the requested time slot",
+            );
+          }
+
+          candidates.sort(
+            (a, b) =>
+              (bookingCounts.get(a._id.toString()) ?? 0) -
+              (bookingCounts.get(b._id.toString()) ?? 0),
+          );
+          assignedMentor = candidates[0];
+        }
+
+        // Create the booking document (same session). The mentor, daily cap and
+        // slot conflicts were all validated inside this transaction.
+        const [created] = await Booking.create(
+          [
+            {
+              mentor: assignedMentor._id,
+              parentName,
+              parentEmail,
+              childAge,
+              startsAt: utcStart,
+              endsAt: utcEnd,
+              timezone,
+              meetingLink,
+            },
+          ],
+          { session },
         );
-      }
-      assignedMentor = mentor;
-    } else {
-      const candidates = mentors.filter((m) => isMentorFree(m._id));
-      if (candidates.length === 0) {
-        await session.abortTransaction();
-        throw new ApiError(
-          409,
-          "No mentors are available for the requested time slot",
-        );
-      }
+        booking = created;
 
-      candidates.sort(
-        (a, b) =>
-          (bookingCounts.get(a._id.toString()) ?? 0) -
-          (bookingCounts.get(b._id.toString()) ?? 0),
-      );
-      assignedMentor = candidates[0];
+        // Commit
+        await session.commitTransaction();
+        break;
+      } catch (err) {
+        // Abort whatever this attempt left open before deciding to retry.
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        if (
+          isTransientTransactionError(err) &&
+          attempt < MAX_TRANSACTION_ATTEMPTS
+        ) {
+          continue;
+        }
+        throw err;
+      }
     }
 
-    // Create the booking document (same session). The mentor, daily cap and
-    // slot conflicts were all validated inside this transaction.
-    const [booking] = await Booking.create(
-      [
-        {
-          mentor: assignedMentor._id,
-          parentName,
-          parentEmail,
-          childAge,
-          startsAt: utcStart,
-          endsAt: utcEnd,
-          timezone,
-          meetingLink,
-        },
-      ],
-      { session },
-    );
+    if (!assignedMentor || !booking) {
+      throw new ApiError(500, "Booking transaction produced no booking");
+    }
 
-    // Commit
-    await session.commitTransaction();
+    const confirmedMentor = assignedMentor;
+    const confirmedBooking = booking;
 
     // Notify both the parent and the mentor with the meeting link. Failures here
     // must not roll back or fail an otherwise successful booking.
     try {
       await sendBookingEmails({
-        bookingId: booking._id.toString(),
+        bookingId: confirmedBooking._id.toString(),
         parentName,
         parentEmail,
         childAge,
-        mentorName: assignedMentor.name,
-        mentorEmail: assignedMentor.email,
-        startsAt: booking.startsAt,
-        endsAt: booking.endsAt,
+        mentorName: confirmedMentor.name,
+        mentorEmail: confirmedMentor.email,
+        startsAt: confirmedBooking.startsAt,
+        endsAt: confirmedBooking.endsAt,
         timezone,
         meetingLink,
       });
     } catch (emailErr) {
       logger.error(
-        { error: emailErr, bookingId: booking._id.toString() },
+        { error: emailErr, bookingId: confirmedBooking._id.toString() },
         "Unexpected failure while sending booking emails",
       );
     }
 
     return {
-      ...serializeBooking(booking.toObject()),
+      ...serializeBooking(confirmedBooking.toObject()),
       // Replace the raw mentor ObjectId with the assigned mentor's details so
       // auto-assigned bookings can render "Your mentor" without a second call.
       mentor: {
-        _id: assignedMentor._id,
-        name: assignedMentor.name,
-        email: assignedMentor.email,
+        _id: confirmedMentor._id,
+        name: confirmedMentor.name,
+        email: confirmedMentor.email,
       },
     };
-  } catch (err) {
-    // Abort on any failure that hasn't already aborted above.
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
-    throw err;
   } finally {
     await session.endSession();
   }

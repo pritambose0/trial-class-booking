@@ -23,8 +23,9 @@ email with a dummy meeting link.
 - **Booking rules enforced** — 30-minute slots, 09:00–18:00 IST, max **2 confirmed
   classes per mentor per IST day**, no past bookings, and a 30-day booking window.
 - **Concurrency-safe** — booking creation runs in a MongoDB transaction and is
-  backed by a unique `{ mentor, startsAt }` index; a losing race returns a clean
-  `409` instead of a server error.
+  backed by a unique `{ mentor, startsAt }` index. Transient transaction write
+  conflicts are retried, and a losing race returns a clean `409` instead of a
+  server error (covered by `server/test/integration/booking-concurrency.test.ts`).
 - **Dummy meeting link** — generated per booking, persisted, returned by the API,
   emailed to both parties, and shown/copyable on the confirmation screen.
 - **Confirmation emails** — HTML email to the parent (their local time) and the
@@ -262,15 +263,33 @@ optional `startsAtLocal`/`endsAtLocal`, and `available`.
 ```bash
 npm run typecheck       # tsc --noEmit
 npm run typecheck:test  # type-check src + tests (tsconfig.test.json)
-npm test                # node:test unit suite (20 tests, no live DB required)
+npm test                # node:test unit suite (28 tests, no live DB required)
+npm run test:integration # transaction/DB integration tests (needs a replica set)
 npm run build           # compile to dist/
 ```
 
-The test suite (`server/test/`) covers timezone/DST resolution, the IST business
-window, meeting-link generation, the booking/availability Zod schemas, the unique
-slot index, and the required `timezone` field. It uses `node:test` with `tsx` and
-does **not** require a running MongoDB, because it only exercises pure
+The unit suite (`server/test/*.test.ts`) covers timezone/DST resolution, the IST
+business window, meeting-link generation, the booking/availability Zod schemas,
+the unique slot index, and the required `timezone` field. It uses `node:test` with
+`tsx` and does **not** require a running MongoDB, because it only exercises pure
 utilities, schemas, and schema metadata.
+
+The integration suite (`server/test/integration/*.test.ts`) exercises the real
+service layer against MongoDB. It covers the "day is fully booked" path (once all
+10 mentors hit their 2-class daily cap, availability reports `remainingSlots: 0`,
+every slot is `available: false`, and the next booking gets a `409`) and the
+concurrency path: two simultaneous requests for the same slot must produce
+exactly one booking and one `409`, never a double-booking or a `500`. Because
+bookings run in a transaction, it **requires a replica set** and a database whose
+name contains `test` (the test refuses to run otherwise). Point it at your own
+cluster:
+
+```bash
+cd server
+MONGODB_URI='mongodb://127.0.0.1:27017/trial-class-booking-test?replicaSet=rs0' \
+  npm run test:integration
+```
+
 
 ### Client (`client/`)
 

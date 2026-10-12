@@ -1,7 +1,8 @@
 import { env } from "../lib/env.js";
 import { isMailerConfigured, transporter } from "../lib/mailer.js";
 import logger from "../lib/logger.js";
-import { formatSlotLabel, IST_ZONE } from "../utils/time.js";
+import { formatSlotLabel } from "../utils/time.js";
+import { IST_ZONE } from "../constants.js";
 
 export interface BookingEmailContext {
   bookingId: string;
@@ -114,7 +115,7 @@ export const sendParentBookingEmail = async (
       "Trial Class Booking Confirmed",
       `Hi ${ctx.parentName}, your trial class with ${ctx.mentorName} has been booked successfully.`,
       detailRow("Class", `Free trial class with ${ctx.mentorName}`) +
-        detailRow("When (your local time)", slot) +
+        detailRow("When", slot) +
         detailRow("Student", reason) +
         detailRow("Booking ID", ctx.bookingId),
       ctx.meetingLink,

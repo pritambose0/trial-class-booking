@@ -5,10 +5,7 @@ import type {
   CreateBookingInput,
   Mentor,
 } from "./types";
-
-const API_URL = (
-  import.meta.env.API_URL ?? "http://localhost:4000/api/v1"
-).replace(/\/+$/, "");
+import { API_URL, CACHE_TTL_MS } from "../constants";
 
 export class ApiRequestError extends Error {
   status: number;
@@ -43,7 +40,6 @@ const inflight = new Map<string, Promise<unknown>>();
 // Availability is best-effort; the server re-validates every booking, so these
 // are never treated as guaranteed bookable slots.
 const cache = new Map<string, { value: unknown; expiresAt: number }>();
-const CACHE_TTL_MS = 30 * 1000;
 
 async function perform<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;

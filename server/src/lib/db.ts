@@ -1,6 +1,12 @@
 import mongoose from "mongoose";
 import logger from "./logger.js";
 import { env } from "./env.js";
+import {
+  MONGO_CONNECT_TIMEOUT_MS,
+  MONGO_MAX_POOL_SIZE,
+  MONGO_SERVER_SELECTION_TIMEOUT_MS,
+  MONGO_SOCKET_TIMEOUT_MS,
+} from "../constants.js";
 
 const globalForMongoose = globalThis as unknown as {
   __trialClassBookingMongoose?: { promise: Promise<void> | null };
@@ -9,10 +15,6 @@ const globalForMongoose = globalThis as unknown as {
 const state = (globalForMongoose.__trialClassBookingMongoose ??= {
   promise: null as Promise<void> | null,
 });
-
-const CONNECT_TIMEOUT_MS = 8000;
-const SERVER_SELECTION_TIMEOUT_MS = 8000;
-const SOCKET_TIMEOUT_MS = 30000;
 
 export const isDBConnected = (): boolean =>
   mongoose.connection.readyState === 1;
@@ -35,10 +37,10 @@ export async function connectDB(): Promise<void> {
     .connect(env.mongoURI, {
       dbName: env.mongoDBName,
       bufferCommands: false,
-      maxPoolSize: 10,
-      connectTimeoutMS: CONNECT_TIMEOUT_MS,
-      serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS,
-      socketTimeoutMS: SOCKET_TIMEOUT_MS,
+      maxPoolSize: MONGO_MAX_POOL_SIZE,
+      connectTimeoutMS: MONGO_CONNECT_TIMEOUT_MS,
+      serverSelectionTimeoutMS: MONGO_SERVER_SELECTION_TIMEOUT_MS,
+      socketTimeoutMS: MONGO_SOCKET_TIMEOUT_MS,
     })
     .then((db) => {
       logger.info(

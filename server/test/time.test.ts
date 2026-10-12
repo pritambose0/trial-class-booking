@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  IST_ZONE,
   formatSlotLabel,
   formatTimeInZone,
   isValidTimeZone,
@@ -10,6 +9,7 @@ import {
   istMinutesSinceDayOpen,
   parseStartTime,
 } from "../src/utils/time.js";
+import { IST_ZONE } from "../src/constants.js";
 
 test("isValidTimeZone accepts IANA zones and rejects junk", () => {
   assert.equal(isValidTimeZone("America/New_York"), true);

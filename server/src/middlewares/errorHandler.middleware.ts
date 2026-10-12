@@ -28,6 +28,17 @@ const isDuplicateKeyError = (e: unknown): e is DuplicateKeyError =>
   e !== null &&
   (e as { code?: unknown }).code === 11000;
 
+// MongoDB labels concurrent write conflicts in a transaction with this label.
+// The service retries them, but if retries are exhausted the user should still
+// get a clean conflict instead of an opaque 500.
+const isTransientTransactionError = (e: unknown): boolean =>
+  typeof e === "object" &&
+  e !== null &&
+  Array.isArray((e as { errorLabels?: unknown }).errorLabels) &&
+  ((e as { errorLabels: unknown[] }).errorLabels as unknown[]).includes(
+    "TransientTransactionError",
+  );
+
 const isMongooseValidationError = (
   e: unknown,
 ): e is MongooseValidationError =>
@@ -51,6 +62,13 @@ export const normalizeError = (err: unknown): ApiError => {
   }
 
   if (isDuplicateKeyError(err)) {
+    return new ApiError(
+      409,
+      "That time slot has just been booked. Please choose another slot.",
+    );
+  }
+
+  if (isTransientTransactionError(err)) {
     return new ApiError(
       409,
       "That time slot has just been booked. Please choose another slot.",

@@ -600,37 +600,154 @@ Files: `client/src/App.tsx`; components (`Header`, `DayTabs`, `SlotGrid`, `Booki
 **Agent (real actions and results):**
 
 ### Inspected
+
 - Read every server file (`app.ts`, routes, controllers, services, validators, models, `utils/time.ts`, `meeting.ts`, mailer, email service, `env.ts`, error handler, bootstrap) and every client file (`App.tsx`, all components, `lib/*`, `index.css`).
 - Compared against the requirements: timezone + DST (Req 1/2), dummy meeting link (Req 3), max 2 classes/mentor/day (Req 4), no-availability state (Req 5), 10 mentors, 30-min slots 09:00–18:00 IST, ~20/day as load.
 
 ### Fixed (server)
+
 - `errorHandler.middleware.ts`: extracted and exported `normalizeError()` that maps database failures to clean HTTP responses — duplicate key `E11000` → **409** ("That time slot has just been booked…"), Mongoose `ValidationError` → **422** with field errors, `CastError` → **400**. This closes the previously-deferred concurrency gap where a loser of a booking race returned a 500.
 - `scripts/bootstrapMentors.ts`: one seed used an unrelated address (`rexaw91050@aahzz.com`); normalized it to the demo domain (`aarav.sharma@mentor.codeyoung.demo`) so the roster is consistent and contains no real-looking accounts.
 - `models/booking.model.ts`: `IBooking.status` type now includes `"cancelled"`, matching the schema enum.
 
 ### Fixed (client)
+
 - `BookingModal.tsx`: closing via overlay/Escape/close button is disabled while a booking request is in flight (prevents the modal unmounting mid-POST and hiding a real booking), and the first field now auto-focuses.
 - `lib/time.ts`: removed the unused duplicate `formatDayLabel` (identical to `formatDayShort`).
 
 ### README
+
 - Rewrote it with overview, features, tech stack, architecture, prerequisites, environment setup (server + client tables), installation, run commands, full API reference + error-code table, timezones/DST, booking rules, testing/checks, security notes, and status.
 - Corrected stale "(wired in a later phase)" wording and marked Phase 5 complete.
 
 ### Audits
+
 - Secrets: `.env` is git-ignored; only `.env.example` placeholders are tracked. No credentials in any tracked file. The only `MONGODB_URI` in the repo is the credential-less local test URI in the test script.
 - `console.*`: none in `server/src` or `client/src` (logging goes through pino).
 - Dependencies: all server deps (`cookie-parser`, `cors`, `dotenv`, `express`, `helmet`, `luxon`, `mongoose`, `nodemailer`, `pino`, `pino-pretty`, `zod`) and client deps are referenced by the code.
 
 ### Verified (actual commands)
+
 - `server`: `npm run typecheck` ✅, `npm run typecheck:test` ✅, `npm test` → **25 passed / 0 failed** (added `errorHandler.test.ts` covering the 409/422/400 mappings; suite needs no live DB), `npm run build` ✅.
 - `client`: `npm run lint` (oxlint) ✅, `npm run build` (tsc -b + vite) ✅.
 
 ### Follow-up: consolidated validation onto a single middleware
+
 - The two validation entry points were merged into one. `utils/validate.ts` was removed; every route now uses `middlewares/validate.middleware.ts`.
 - The middleware was generalized to take a section→schema map (`validate({ body, query, params })`) instead of a single `{ body, query, params }` object, so the existing flat Zod schemas could be reused unchanged (and stay valid for the unit tests).
 - `mentor.validator.ts` flattened `getMentorByIdSchema` to `z.object({ id })`; `mentor.routes.ts` and `booking.routes.ts` now apply `validate(...)` for `params`/`query`/`body`; `booking.controller.ts` reads the already-validated `req.*` values.
 - Added `test/validate.middleware.test.ts` (body transform + write-back, 422 on invalid input, `req.query` getter shadowing). Server suite is now **28 tests passing**.
 
 ### Not changed (working code, deliberate)
+
 - No API rate limiting (out of scope); modal lacks a full focus trap (basic `aria`/autofocus only).
 
+---
+
+## 13. Integration tests: full-day capacity & booking concurrency
+
+**User:** Asked to add integration tests that prove the booking rules end-to-end against a real MongoDB — a full-day capacity case, a single-slot "full" case, and two simultaneous bookings racing for the same mentor + slot (and for the last free mentor) — and to confirm a race loser gets a clean conflict instead of a 500. Also asked for a dedicated script to run them.
+
+**Agent (real actions):**
+
+- Added `server/test/integration/booking-capacity.test.ts`: books a full IST day until it is exhausted, and asserts a single slot becomes `available:false` once every mentor is at the 2/day cap.
+- Added `server/test/integration/booking-concurrency.test.ts` (2 tests): two parallel `createBooking` calls for the same explicit mentor + `startsAt`, and a second race for the last auto-assigned free mentor. Both assert exactly one success and one conflict.
+- Ran them against MongoDB Atlas (replica set). The loser did **not** surface as a duplicate-key `E11000`; inside the transaction it surfaced as `MongoServerError` `code=112` labelled `TransientTransactionError` (the write conflict aborts the transaction before the unique index is reached).
+
+**Fix:**
+
+- `server/src/services/booking.service.ts`: wrapped the transaction body in a retry loop (`MAX_TRANSACTION_ATTEMPTS = 3`) that retries only `TransientTransactionError`; added `isTransientTransactionError(...)`; moved confirmation emails to run once, after commit.
+- `server/src/middlewares/errorHandler.middleware.ts`: mapped `isTransientTransactionError` → **409**, so a genuine race loss returns the same "slot just taken" message as a duplicate key.
+
+**Verified:**
+
+- `npm run test:integration` → **4 passed**. The script sets `SMTP_HOST=` (log email instead of sending) and `--test-concurrency=1` (prevents cross-file cleanup clobbering); a guard requires the DB name to contain `test`.
+- `npm test` → **28 passed** (no live DB required).
+
+---
+
+## 14. Bug: started slots were labelled "Full"
+
+**User:** Reported that an Anchorage parent saw a slot labelled "Full" and asked for an explanation.
+
+**Agent (diagnosis):**
+
+- The timezone conversion was correct: IST is `UTC+5:30`, `America/Anchorage` is `UTC-8` (AKDT) — 13.5h apart, so `21:30` Anchorage = `11:00` IST the next day.
+- The cause was not timezone: the server marks a slot unavailable as soon as it is not strictly in the future (`slotStart > Date.now()`), the client only removed slots once they had **ended** (`endsAt <= now`), and `SlotGrid` rendered *every* unavailable slot as "Full". A slot that had already started therefore looked identical to a booked-out one, and the list never refreshed on a timer.
+
+**User:** Asked to fix it (drop past/started slots and refresh automatically) and to make the guardian-details modal responsive.
+
+**Agent (client fix — `client/src/App.tsx`):**
+
+- Drop slots that have already **started**, instead of only those that have ended: `if (new Date(slot.startsAt).getTime() <= now) continue;`
+- Added a 60-second tick so started slots disappear without a network refetch:
+  ```tsx
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  ```
+- Re-filtered the derived grid on every tick and fall back to the first open day when the selected day disappears:
+  ```tsx
+  const slotsByDay = useMemo(() => {
+    if (!visible) return EMPTY_SLOTS;
+    const grouped: Record<string, AvailabilitySlot[]> = {};
+    for (const [dayKey, slots] of Object.entries(visible.slots)) {
+      const upcoming = slots.filter((s) => new Date(s.startsAt).getTime() > now);
+      if (upcoming.length > 0) grouped[dayKey] = upcoming;
+    }
+    return grouped;
+  }, [visible, now]);
+
+  const activeDay =
+    selectedDay && slotsByDay[selectedDay]
+      ? selectedDay
+      : (days.find((k) => slotsByDay[k].some((s) => s.available)) ?? days[0] ?? "");
+  ```
+- Result: "Full" now means booked-out only; passed/started slots disappear on their own.
+
+---
+
+## 15. Responsive guardian-details modal
+
+**User:** Asked to make the guardian-details (booking) modal responsive on small screens.
+
+**Agent (`client/src/components/BookingModal.tsx`):**
+
+- Inputs use `text-base` on mobile (≥16px prevents iOS focus-zoom) and `text-sm` from the `sm:` breakpoint up.
+- Header uses tighter padding and a smaller title on mobile (`px-5 pb-4 pt-4`, `text-lg`), and the close button is `shrink-0` so it is never squeezed.
+- Body honours the device safe area: `pb-[calc(1.25rem+env(safe-area-inset-bottom))]`.
+- Child-age field is full width on mobile (`max-w-full sm:max-w-32`).
+
+**Verified:**
+
+- `client`: `npm run lint` (oxlint) ✅, `npm run build` (tsc -b + vite) ✅.
+
+---
+
+## 16. Centralized constants
+
+**User:** Asked to collect all constants into one dedicated file, separated from the files that assign/use them (config and domain values only; content/seed arrays stay put).
+
+**Agent:** Added one constants module per package (`server/src/constants.ts`, `client/src/constants.ts`) and pointed every consumer at it, so no file defines its own numeric/string config inline.
+
+**Server (`server/src/constants.ts`):**
+
+- Time/domain: `IST_ZONE`, `IST_DAY_START_HOUR`, `IST_DAY_END_HOUR` (moved out of `utils/time.ts`), `SLOT_DURATION_MS`, `SLOT_BOUNDARY_MINUTES`, `MAX_DAILY_BOOKINGS_PER_MENTOR`, `MAX_ADVANCE_DAYS`, `MS_PER_DAY`, `MAX_TRANSACTION_ATTEMPTS`.
+- Validation limits: `MIN/MAX_PARENT_NAME_LENGTH`, `MIN/MAX_CHILD_AGE`.
+- HTTP/API: `API_PREFIX`, `JSON_BODY_LIMIT`, `SERVICE_NAME`.
+- Database: `MONGO_CONNECT_TIMEOUT_MS`, `MONGO_SERVER_SELECTION_TIMEOUT_MS`, `MONGO_SOCKET_TIMEOUT_MS`, `MONGO_MAX_POOL_SIZE`.
+- Updated `utils/time.ts`, `services/booking.service.ts`, `services/email.service.ts`, `lib/db.ts`, `app.ts`, `validators/booking.validator.ts`, and `test/time.test.ts` to import from `constants.js`.
+
+**Client (`client/src/constants.ts`):**
+
+- `IST_ZONE` (moved out of `lib/time.ts`), `DAYS_PER_PAGE`, `MIN/MAX_PARENT_NAME_LENGTH`, `MIN/MAX_CHILD_AGE`, `API_URL`, `CACHE_TTL_MS`.
+- Updated `lib/api.ts`, `App.tsx`, `components/Confirmation.tsx`, and `components/BookingModal.tsx` to import from `../constants`.
+
+**Left in place deliberately:** content/copy arrays (`FEATURES`, `HOW_IT_WORKS`), the `EMPTY_SLOTS` fallback, the `FOCUSABLE` selector, the `COMMON_TIMEZONES` list, the mentor seed roster, and human-readable error messages.
+
+**Verified:**
+
+- `server`: `npm run typecheck` ✅, `npm run typecheck:test` ✅, `npm test` → **28 passed**, `npm run build` ✅.
+- `client`: `npm run lint` ✅, `npm run build` ✅.

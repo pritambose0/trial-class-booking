@@ -1,16 +1,14 @@
 import { useMemo } from "react";
-import { COMMON_TIMEZONES } from "../lib/time";
+import { formatZoneLabel, getTimezoneGroups } from "../lib/time";
 
 interface TimezoneSelectProps {
   value: string;
   onChange: (timezone: string) => void;
+  id?: string;
 }
 
-const TimezoneSelect = ({ value, onChange }: TimezoneSelectProps) => {
-  const options = useMemo(() => {
-    const unique = new Set([value, ...COMMON_TIMEZONES]);
-    return Array.from(unique);
-  }, [value]);
+const TimezoneSelect = ({ value, onChange, id }: TimezoneSelectProps) => {
+  const { common, all } = useMemo(() => getTimezoneGroups(value), [value]);
 
   return (
     <div className="relative flex items-center">
@@ -31,16 +29,28 @@ const TimezoneSelect = ({ value, onChange }: TimezoneSelectProps) => {
         </svg>
       </span>
       <select
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-label="Your timezone"
-        className="w-full appearance-none rounded-xl border border-white/20 bg-white py-2.5 pl-9 pr-9 text-sm font-semibold text-slate-900 shadow-card transition outline-none hover:shadow-lift focus:ring-2 focus:ring-brand-300 sm:w-64"
+        className="w-full appearance-none rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-9 text-sm font-semibold text-slate-800 shadow-soft outline-none transition hover:border-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 sm:w-72"
       >
-        {options.map((zone) => (
-          <option key={zone} value={zone}>
-            {zone.replace(/_/g, " ")}
-          </option>
-        ))}
+        <optgroup label="Common timezones">
+          {common.map((zone) => (
+            <option key={zone} value={zone}>
+              {formatZoneLabel(zone)}
+            </option>
+          ))}
+        </optgroup>
+        {all.length > 0 ? (
+          <optgroup label="All timezones">
+            {all.map((zone) => (
+              <option key={zone} value={zone}>
+                {formatZoneLabel(zone)}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
       </select>
       <span className="pointer-events-none absolute right-3 text-slate-400">
         <svg

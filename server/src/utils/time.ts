@@ -1,14 +1,10 @@
 import { DateTime, IANAZone } from "luxon";
 import { ApiError } from "./ApiError.js";
-
-// Mentors operate on Indian Standard Time. India has no DST, so the offset is
-// constant in the scheduling logic itself; parents' zones are resolved through
-// luxon's named-zone conversions, which handle DST transitions automatically.
-export const IST_ZONE = "Asia/Kolkata";
-
-// Daily business hours for trial classes, expressed in IST.
-export const IST_DAY_START_HOUR = 9; // 09:00 IST
-export const IST_DAY_END_HOUR = 18; // 18:00 IST
+import {
+  IST_DAY_END_HOUR,
+  IST_DAY_START_HOUR,
+  IST_ZONE,
+} from "../constants.js";
 
 export const isValidTimeZone = (timezone: string): boolean =>
   IANAZone.isValidZone(timezone);
